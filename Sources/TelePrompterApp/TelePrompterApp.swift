@@ -43,7 +43,8 @@ struct SavedScript: Codable, Identifiable, Equatable {
     var id: UUID
     var body: String
     var savedAt: Date
-    init(body: String, savedAt: Date = .now) { self.id = UUID(); self.body = body; self.savedAt = savedAt }
+    var fileName: String?
+    init(body: String, fileName: String? = nil, savedAt: Date = .now) { self.id = UUID(); self.body = body; self.fileName = fileName; self.savedAt = savedAt }
     var title: String { body.split(whereSeparator: \.isNewline).first.map(String.init) ?? "Untitled script" }
 }
 
@@ -87,6 +88,34 @@ final class PrompterModel: ObservableObject {
 
     var promptBackground: Color { promptTheme.background }
     var promptText: Color { promptTheme.text }
+    var scriptLibraryURL: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("EchoPrompt Scripts", isDirectory: true)
+    }
+
+    private func fileURL(for item: SavedScript) -> URL {
+        scriptLibraryURL.appendingPathComponent(item.fileName ?? "\(item.id.uuidString).txt")
+    }
+
+    private func fileName(for text: String, excluding itemID: UUID? = nil, currentFileName: String? = nil) -> String {
+        let heading = text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .prefix(2)
+            .joined(separator: " ")
+        let invalid = CharacterSet.alphanumerics.union(.whitespaces).inverted
+        let safe = heading.components(separatedBy: invalid).joined()
+            .split(whereSeparator: { $0.isWhitespace }).joined(separator: "-")
+        let stem = String(safe.prefix(60)).isEmpty ? "EchoPrompt-script" : String(safe.prefix(60))
+        var candidate = "\(stem).txt"
+        var number = 2
+        let used = Set(history.filter { $0.id != itemID }.compactMap(\.fileName))
+        while used.contains(candidate) || (candidate != currentFileName && FileManager.default.fileExists(atPath: scriptLibraryURL.appendingPathComponent(candidate).path)) {
+            candidate = "\(stem)-\(number).txt"
+            number += 1
+        }
+        return candidate
+    }
 
     init() {
         if let data = UserDefaults.standard.data(forKey: historyKey), let items = try? JSONDecoder().decode([SavedScript].self, from: data) { history = items }
@@ -95,25 +124,45 @@ final class PrompterModel: ObservableObject {
     func saveHistoryNow() {
         let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        let item: SavedScript
         if let activeHistoryID, let index = history.firstIndex(where: { $0.id == activeHistoryID }) {
             // Preserve the loaded script's identity instead of creating a duplicate.
+            let oldURL = fileURL(for: history[index])
             history[index].body = script
             history[index].savedAt = .now
+            history[index].fileName = fileName(for: script, excluding: history[index].id, currentFileName: history[index].fileName)
+            if oldURL != fileURL(for: history[index]) { try? FileManager.default.removeItem(at: oldURL) }
+            item = history[index]
         } else {
             history.removeAll { $0.body == script }
-            let saved = SavedScript(body: script)
+            let saved = SavedScript(body: script, fileName: fileName(for: script))
             history.insert(saved, at: 0)
             activeHistoryID = saved.id
+            item = saved
+        }
+        do {
+            try FileManager.default.createDirectory(at: scriptLibraryURL, withIntermediateDirectories: true)
+            try script.write(to: fileURL(for: item), atomically: true, encoding: .utf8)
+        } catch {
+            // The history list remains available even if Finder storage is temporarily unavailable.
         }
         history = Array(history.prefix(20))
         persistHistory()
     }
 
-    func loadHistory(_ item: SavedScript) { activeHistoryID = item.id; script = item.body }
+    func loadHistory(_ item: SavedScript) {
+        activeHistoryID = item.id
+        script = (try? String(contentsOf: fileURL(for: item), encoding: .utf8)) ?? item.body
+    }
     func deleteHistory(_ item: SavedScript) {
         history.removeAll { $0.id == item.id }
         if activeHistoryID == item.id { activeHistoryID = nil }
+        try? FileManager.default.removeItem(at: fileURL(for: item))
         persistHistory()
+    }
+    func revealScriptLibrary() {
+        try? FileManager.default.createDirectory(at: scriptLibraryURL, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(scriptLibraryURL)
     }
     private func persistHistory() { if let data = try? JSONEncoder().encode(history) { UserDefaults.standard.set(data, forKey: historyKey) } }
 
@@ -205,9 +254,9 @@ struct EditorView: View {
                 HStack(alignment: .top, spacing: 14) {
                     EditorCard(title: "Reading pace", icon: "gauge.with.dots.needle.33percent") {
                         ControlLabel(title: "Text size", value: model.fontSize, suffix: " pt")
-                        Slider(value: $model.fontSize, in: 24...110, step: 1)
+                        SmoothSlider(value: $model.fontSize, range: 24...110)
                         ControlLabel(title: "Scroll speed", value: model.speed, suffix: " px/s")
-                        Slider(value: $model.speed, in: 5...100, step: 1)
+                        SmoothSlider(value: $model.speed, range: 5...100)
                     }
                     EditorCard(title: "How you control it", icon: "hand.tap.fill") {
                         HStack(spacing: 9) {
@@ -267,7 +316,13 @@ struct SavedScriptsPopover: View {
     @ObservedObject var model: PrompterModel
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Saved scripts", systemImage: "bookmark.fill").font(.headline)
+            HStack {
+                Label("Saved scripts", systemImage: "bookmark.fill").font(.headline)
+                Spacer()
+                Button("Reveal in Finder") { model.revealScriptLibrary() }.buttonStyle(.bordered)
+            }
+            Text("Saved as .txt files in Documents/EchoPrompt Scripts")
+                .font(.caption).foregroundStyle(.secondary)
             if model.history.isEmpty {
                 Text("Scripts appear here after you start EchoPrompt.")
                     .font(.subheadline).foregroundStyle(.secondary)
@@ -312,6 +367,36 @@ struct ControlLabel: View {
     var body: some View {
         Text("\(title): \(Int(value))\(suffix)")
             .font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+    }
+}
+
+/// Explicitly uses an NSSlider without tick marks. The default stepped SwiftUI
+/// slider introduces a dotted tick row that distracts from the reading controls.
+struct SmoothSlider: NSViewRepresentable {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSSlider {
+        let slider = NSSlider(value: value, minValue: range.lowerBound, maxValue: range.upperBound, target: context.coordinator, action: #selector(Coordinator.valueChanged(_:)))
+        slider.numberOfTickMarks = 0
+        slider.allowsTickMarkValuesOnly = false
+        slider.isContinuous = true
+        slider.controlSize = .large
+        return slider
+    }
+
+    func updateNSView(_ slider: NSSlider, context: Context) {
+        slider.minValue = range.lowerBound
+        slider.maxValue = range.upperBound
+        if slider.doubleValue != value { slider.doubleValue = value }
+    }
+
+    final class Coordinator: NSObject {
+        var parent: SmoothSlider
+        init(_ parent: SmoothSlider) { self.parent = parent }
+        @objc func valueChanged(_ sender: NSSlider) { parent.value = sender.doubleValue }
     }
 }
 
