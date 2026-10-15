@@ -8,6 +8,7 @@
 <key>CFBundleShortVersionString</key><string>1.0</string>
 <key>CFBundleVersion</key><string>1</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
+<key>LSMultipleInstancesProhibited</key><true/>
 <key>NSMicrophoneUsageDescription</key><string>EchoPrompt uses the microphone only to recognize optional voice navigation commands.</string>
 <key>NSSpeechRecognitionUsageDescription</key><string>EchoPrompt uses speech recognition only to recognize optional voice navigation commands.</string>
 </dict></plist>

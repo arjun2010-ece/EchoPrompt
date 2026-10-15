@@ -17,6 +17,14 @@ struct EchoPromptApp: App {
                 .frame(minWidth: 660, minHeight: 520)
         }
         .defaultSize(width: 760, height: 620)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Open Script Studio") {
+                    NotificationCenter.default.post(name: .restoreEchoPromptWorkspace, object: nil)
+                }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+            }
+        }
 
         Settings {
             SettingsView(model: model)
@@ -33,9 +41,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // A Dock click should keep a visible floating prompter in presentation
+        // mode. Only restore Script Studio if there is no visible prompt.
+        let promptIsVisible = NSApp.windows.contains { $0 is NSPanel && $0.isVisible }
+        guard !promptIsVisible else {
+            // Returning false prevents AppKit's default untitled-window action.
+            return false
+        }
         NotificationCenter.default.post(name: .restoreEchoPromptWorkspace, object: nil)
         NSApp.activate(ignoringOtherApps: true)
-        return true
+        return false
     }
 }
 
@@ -68,6 +83,7 @@ final class PrompterModel: ObservableObject {
     @Published var script = "Welcome to EchoPrompt.\n\nPaste your script here, then start EchoPrompt when you are ready."
     @Published var fontSize: Double = 50
     @Published var speed: Double = 24
+    @Published var lineSpacing: Double = 1.28
     @Published var opacity: Double = 0.92
     @Published var mirrorText = false
     /// Normal scrolling is deliberately the default. Voice mode is opt-in.
@@ -255,6 +271,8 @@ struct EditorView: View {
                     EditorCard(title: "Reading pace", icon: "gauge.with.dots.needle.33percent") {
                         ControlLabel(title: "Text size", value: model.fontSize, suffix: " pt")
                         SmoothSlider(value: $model.fontSize, range: 24...110)
+                        ControlLabel(title: "Line spacing", value: model.lineSpacing, suffix: "×")
+                        SmoothSlider(value: $model.lineSpacing, range: 0.9...2.0)
                         ControlLabel(title: "Scroll speed", value: model.speed, suffix: " px/s")
                         SmoothSlider(value: $model.speed, range: 5...100)
                     }
@@ -268,7 +286,7 @@ struct EditorView: View {
                             .font(.subheadline).foregroundStyle(.secondary)
                         Toggle("Click through prompt", isOn: $model.clickThroughPresentation)
                             .font(.subheadline)
-                        Text("Useful while working in VS Code. Use the Dock to return to EchoPrompt and turn it off.")
+                        Text("Useful while working in VS Code. Return via Edit script or EchoPrompt ▸ Open Script Studio (⇧⌘E).")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -365,7 +383,7 @@ struct ControlLabel: View {
     let value: Double
     let suffix: String
     var body: some View {
-        Text("\(title): \(Int(value))\(suffix)")
+        Text("\(title): \(suffix == "×" ? String(format: "%.2f", value) : String(Int(value)))\(suffix)")
             .font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
     }
 }
@@ -403,6 +421,7 @@ struct SmoothSlider: NSViewRepresentable {
 struct PromptView: View {
     @ObservedObject var model: PrompterModel
     @State private var isPlaying = false
+    @State private var showTextAppearance = false
     @State private var offset: CGFloat = 0
     @State private var lastTick = Date()
     private let timer = Timer.publish(every: 1.0 / 60.0, on: .main, in: .common).autoconnect()
@@ -433,13 +452,16 @@ struct PromptView: View {
                             .font(.system(size: model.fontSize, weight: .medium))
                             .foregroundStyle(model.promptText)
                             .multilineTextAlignment(.center)
-                            .lineSpacing(model.fontSize * 0.28)
+                            .lineSpacing(model.fontSize * (model.lineSpacing - 1))
                             .padding(.horizontal, 56)
                             .padding(.vertical, proxy.size.height * 0.42)
                             .scaleEffect(x: model.mirrorText ? -1 : 1, y: 1)
                             .offset(y: -offset)
                             .id("script")
                     }
+                    // The script is moved by the prompter, not by incidental
+                    // trackpad gestures over the control dock.
+                    .scrollDisabled(true)
                 }
             }
             .clipped()
@@ -467,15 +489,26 @@ struct PromptView: View {
                 .background(Color.black.opacity(0.96))
                 Spacer()
                 VStack(spacing: 10) {
-                    HStack(spacing: 12) {
-                        PromptControlButton(title: "Slower", detail: "− speed", icon: "tortoise") { changeSpeed(forward: false) }
-                        PromptControlButton(title: isPlaying ? "Pause" : "Play", detail: playbackRateLabel, icon: isPlaying ? "pause.fill" : "play.fill", prominent: true) { isPlaying.toggle() }
-                            .keyboardShortcut(.space, modifiers: [])
-                        PromptControlButton(title: "Faster", detail: "+ speed", icon: "hare") { changeSpeed(forward: true) }
-                        Toggle("Mirror text", isOn: $model.mirrorText)
-                            .toggleStyle(.switch)
-                            .foregroundStyle(.white)
+                    GeometryReader { proxy in
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 12) {
+                                PromptControlButton(title: "Slower", detail: "− speed", icon: "tortoise") { changeSpeed(forward: false) }
+                                PromptControlButton(title: isPlaying ? "Pause" : "Play", detail: playbackRateLabel, icon: isPlaying ? "pause.fill" : "play.fill", prominent: true) { isPlaying.toggle() }
+                                    .keyboardShortcut(.space, modifiers: [])
+                                PromptControlButton(title: "Faster", detail: "+ speed", icon: "hare") { changeSpeed(forward: true) }
+                                PromptControlButton(title: "Text", detail: "Aa", icon: "textformat") { showTextAppearance.toggle() }
+                                    .popover(isPresented: $showTextAppearance, arrowEdge: .bottom) {
+                                        PromptAppearanceInspector(model: model)
+                                    }
+                                Toggle("Mirror text", isOn: $model.mirrorText)
+                                    .toggleStyle(.switch)
+                                    .foregroundStyle(.white)
+                            }
+                            .frame(minWidth: proxy.size.width, alignment: .center)
+                            .padding(.horizontal, 2)
+                        }
                     }
+                    .frame(height: 58)
                     Text("Space: play or pause   •   Esc: close   •   Reading pace: \(playbackRateLabel)")
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.7))
@@ -483,7 +516,7 @@ struct PromptView: View {
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)
                 .frame(maxWidth: .infinity)
-                .background(Color.black.opacity(0.98))
+                .background(Color.black)
                 .overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.18)).frame(height: 1) }
                 .shadow(color: .black.opacity(0.7), radius: 14, y: -5)
             }
@@ -494,6 +527,26 @@ struct PromptView: View {
             if isPlaying { offset += CGFloat(model.speed * elapsed) }
         }
         .onExitCommand { model.closePrompter() }
+    }
+}
+
+/// A small, temporary live inspector. It is anchored to the Text control rather
+/// than becoming another opaque layer across the reading surface.
+struct PromptAppearanceInspector: View {
+    @ObservedObject var model: PrompterModel
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Text size \(Int(model.fontSize)) pt").font(.caption.weight(.semibold))
+                SmoothSlider(value: $model.fontSize, range: 24...110)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Line spacing \(String(format: "%.2f", model.lineSpacing))×").font(.caption.weight(.semibold))
+                SmoothSlider(value: $model.lineSpacing, range: 0.9...2.0)
+            }
+        }
+        .padding(16)
+        .frame(width: 320)
     }
 }
 
