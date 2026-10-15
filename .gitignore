@@ -1,0 +1,21 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode user and derived data
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xccheckout
+*.xcscmblueprint
+
+# macOS files and application build products
+.DS_Store
+*.app/
+
+# Editor and temporary files
+.idea/
+.vscode/
+*.swp
+*.tmp
