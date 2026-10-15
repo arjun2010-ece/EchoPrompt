@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Combine
+import UniformTypeIdentifiers
 
 extension Notification.Name {
     static let restoreEchoPromptWorkspace = Notification.Name("restoreEchoPromptWorkspace")
@@ -78,6 +79,18 @@ enum StudioAppearance: String, CaseIterable, Identifiable {
     var colorScheme: ColorScheme { self == .light ? .light : .dark }
 }
 
+enum PromptControlMode: String, CaseIterable, Identifiable {
+    case normal, voice, recordedAudio
+    var id: String { rawValue }
+    var name: String {
+        switch self {
+        case .normal: "Normal scrolling"
+        case .voice: "Voice control"
+        case .recordedAudio: "Recorded audio"
+        }
+    }
+}
+
 @MainActor
 final class PrompterModel: ObservableObject {
     @Published var script = "Welcome to EchoPrompt.\n\nPaste your script here, then start EchoPrompt when you are ready."
@@ -86,8 +99,9 @@ final class PrompterModel: ObservableObject {
     @Published var lineSpacing: Double = 1.28
     @Published var opacity: Double = 0.92
     @Published var mirrorText = false
-    /// Normal scrolling is deliberately the default. Voice mode is opt-in.
-    @Published var voiceControlled = false
+    /// Normal scrolling is deliberately the default; modes are mutually exclusive.
+    @Published var controlMode: PromptControlMode = .normal
+    @Published var audioFileURL: URL?
     /// Lets the presenter click through the floating prompt onto VS Code.
     @Published var clickThroughPresentation = false {
         didSet { panel?.ignoresMouseEvents = clickThroughPresentation }
@@ -179,6 +193,16 @@ final class PrompterModel: ObservableObject {
     func revealScriptLibrary() {
         try? FileManager.default.createDirectory(at: scriptLibraryURL, withIntermediateDirectories: true)
         NSWorkspace.shared.open(scriptLibraryURL)
+    }
+
+    func chooseAudioFile() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose recorded audio"
+        panel.message = "Choose an audio file for future script synchronization."
+        panel.allowedContentTypes = [.audio]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK { audioFileURL = panel.url }
     }
     private func persistHistory() { if let data = try? JSONEncoder().encode(history) { UserDefaults.standard.set(data, forKey: historyKey) } }
 
@@ -276,18 +300,36 @@ struct EditorView: View {
                         ControlLabel(title: "Scroll speed", value: model.speed, suffix: " px/s")
                         SmoothSlider(value: $model.speed, range: 5...100)
                     }
-                    EditorCard(title: "How you control it", icon: "hand.tap.fill") {
-                        HStack(spacing: 9) {
-                            Text("Normal").fontWeight(model.voiceControlled ? .regular : .semibold)
-                            Toggle("Voice-controlled", isOn: $model.voiceControlled).labelsHidden().toggleStyle(.switch).accessibilityLabel("Voice-controlled mode")
-                            Text("Voice").fontWeight(model.voiceControlled ? .semibold : .regular)
+                    EditorCard(title: "Control mode", icon: "hand.tap.fill") {
+                        Picker("Control mode", selection: $model.controlMode) {
+                            Text("Normal").tag(PromptControlMode.normal)
+                            Text("Voice").tag(PromptControlMode.voice)
+                            Text("Audio").tag(PromptControlMode.recordedAudio)
                         }
-                        Text(model.voiceControlled ? "Voice mode selected" : "Manual controls selected")
-                            .font(.subheadline).foregroundStyle(.secondary)
-                        Toggle("Click through prompt", isOn: $model.clickThroughPresentation)
-                            .font(.subheadline)
-                        Text("Useful while working in VS Code. Return via Edit script or EchoPrompt ▸ Open Script Studio (⇧⌘E).")
-                            .font(.caption).foregroundStyle(.secondary)
+                        .pickerStyle(.segmented)
+                        if model.controlMode == .recordedAudio {
+                            HStack {
+                                Button("Choose audio file…") { model.chooseAudioFile() }.buttonStyle(.bordered)
+                                Text(model.audioFileURL?.lastPathComponent ?? "No file selected")
+                                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Text("Audio-synced scrolling will be added next. Your selected file stays local to this Mac.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        } else if model.controlMode == .voice {
+                            Text("Voice control will use live speech commands when implemented.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Text("Automatic scrolling with on-screen controls.")
+                                .font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        Divider().padding(.top, 4)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Toggle("Click through prompt", isOn: $model.clickThroughPresentation)
+                                .font(.subheadline)
+                            Text("Useful while working in VS Code. Return via Edit script or EchoPrompt ▸ Open Script Studio (⇧⌘E).")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        .padding(.top, 12)
                     }
                 }
 
@@ -475,7 +517,7 @@ struct PromptView: View {
                     .help("Return to the EchoPrompt Script Studio")
                     Spacer()
                     VStack(spacing: 2) {
-                        Text(model.voiceControlled ? "VOICE-CONTROLLED" : "NORMAL TELEPROMPTER")
+                        Text(model.controlMode.name.uppercased())
                         Text(isPlaying ? "SCROLLING" : "PAUSED")
                     }
                     .font(.caption.bold()).foregroundStyle(.white.opacity(0.9))
