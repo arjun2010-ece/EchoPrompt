@@ -385,6 +385,383 @@ final class VoiceScrollController: NSObject, ObservableObject {
     }
 }
 
+/// Local-file playback plus a timestamped Speech transcription. It is separate
+/// from VoiceScrollController: Recorded Audio never opens the microphone and
+/// advances only according to the selected file's playback time.
+final class RecordedAudioController: NSObject, ObservableObject, AVAudioPlayerDelegate {
+    @Published private(set) var status = "Choose an audio file in Script Studio"
+    @Published private(set) var isPreparing = false
+    @Published private(set) var isReady = false
+    @Published private(set) var isPlaying = false
+    @Published private(set) var currentWordIndex = -1
+
+    private struct TimedWord {
+        let scriptIndex: Int
+        let time: TimeInterval
+    }
+
+    /// A recognition segment is usually a single word, but the Speech
+    /// framework is also allowed to return a short phrase. Splitting it here
+    /// makes the subsequent alignment use the same word granularity as the
+    /// prompter rather than treating a phrase as one opaque token.
+    private struct TranscriptToken {
+        let word: String
+        let time: TimeInterval
+    }
+
+    private let recognizer = SFSpeechRecognizer(locale: .current)
+    private var player: AVAudioPlayer?
+    private var request: SFSpeechURLRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+    private var progressTimer: Timer?
+    private var timedWords: [TimedWord] = []
+    private var preparationID = UUID()
+    private var scriptWordCount = 0
+    private var audioDuration: TimeInterval = 0
+
+    /// Match Voice mode's consent UX: request Speech Recognition while Script
+    /// Studio remains visible, but defer all file work and playback until
+    /// presentation begins.
+    func preparePermissions() {
+        guard !isPreparing else { return }
+        guard Bundle.main.object(forInfoDictionaryKey: "NSSpeechRecognitionUsageDescription") != nil else {
+            status = "Audio synchronization requires the packaged EchoPrompt.app"
+            return
+        }
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized:
+            status = "Audio synchronization is ready"
+        case .notDetermined:
+            status = "Requesting Speech Recognition permission…"
+            SFSpeechRecognizer.requestAuthorization { [weak self] authorization in
+                DispatchQueue.main.async {
+                    self?.status = authorization == .authorized
+                        ? "Audio synchronization is ready"
+                        : "Allow Speech Recognition to synchronize audio"
+                }
+            }
+        case .denied, .restricted:
+            status = "Allow Speech Recognition to synchronize audio"
+        @unknown default:
+            status = "Speech Recognition permission is unavailable"
+        }
+    }
+
+    func prepare(audioURL: URL?, script: String) {
+        stop()
+        let newPreparationID = UUID()
+        preparationID = newPreparationID
+        guard Bundle.main.object(forInfoDictionaryKey: "NSSpeechRecognitionUsageDescription") != nil else {
+            status = "Audio synchronization requires the packaged EchoPrompt.app"
+            return
+        }
+        guard let audioURL else {
+            status = "Choose an audio file in Script Studio"
+            return
+        }
+        guard !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            status = "Add a script before preparing audio"
+            return
+        }
+        guard recognizer?.isAvailable == true else {
+            status = "Speech recognition is currently unavailable"
+            return
+        }
+        do {
+            let player = try AVAudioPlayer(contentsOf: audioURL)
+            player.delegate = self
+            player.prepareToPlay()
+            self.player = player
+            self.audioDuration = player.duration
+            self.scriptWordCount = Self.words(in: script).count
+        } catch {
+            status = "Could not open the selected audio file"
+            return
+        }
+
+        isPreparing = true
+        isReady = false
+        status = "Preparing audio synchronization…"
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized:
+            transcribe(audioURL: audioURL, script: script, preparationID: newPreparationID)
+        case .notDetermined:
+            SFSpeechRecognizer.requestAuthorization { [weak self] authorization in
+                DispatchQueue.main.async {
+                    guard authorization == .authorized else {
+                        self?.finishPreparation("Allow Speech Recognition to synchronize audio")
+                        return
+                    }
+                    self?.transcribe(audioURL: audioURL, script: script, preparationID: newPreparationID)
+                }
+            }
+        case .denied, .restricted:
+            finishPreparation("Allow Speech Recognition to synchronize audio")
+        @unknown default:
+            finishPreparation("Speech Recognition permission is unavailable")
+        }
+    }
+
+    func togglePlayback() {
+        isPlaying ? pause() : play()
+    }
+
+    func play() {
+        guard isReady, !isPreparing, !timedWords.isEmpty, let player else { return }
+        if player.currentTime >= player.duration {
+            restart()
+        }
+        player.play()
+        isPlaying = true
+        status = "Playing synchronized audio"
+        startProgressTimer()
+    }
+
+    func pause() {
+        player?.pause()
+        progressTimer?.invalidate()
+        progressTimer = nil
+        isPlaying = false
+        if !isPreparing { status = "Paused" }
+    }
+
+    func restart() {
+        player?.pause()
+        player?.currentTime = 0
+        progressTimer?.invalidate()
+        progressTimer = nil
+        isPlaying = false
+        currentWordIndex = -1
+        if !isPreparing { status = timedWords.isEmpty ? status : "Ready — press Play" }
+    }
+
+    func stop() {
+        // Ignore a final callback from any transcription that was just
+        // cancelled because the prompter closed or a new run began.
+        preparationID = UUID()
+        progressTimer?.invalidate()
+        progressTimer = nil
+        player?.stop()
+        player = nil
+        task?.cancel()
+        request = nil
+        task = nil
+        timedWords = []
+        scriptWordCount = 0
+        audioDuration = 0
+        isPlaying = false
+        isPreparing = false
+        isReady = false
+        currentWordIndex = -1
+    }
+
+    private func transcribe(audioURL: URL, script: String, preparationID: UUID) {
+        guard self.preparationID == preparationID else { return }
+        let request = SFSpeechURLRecognitionRequest(url: audioURL)
+        request.shouldReportPartialResults = false
+        request.taskHint = .dictation
+        request.contextualStrings = Array(script.split(whereSeparator: { $0.isWhitespace }).prefix(100).map(String.init))
+        self.request = request
+        task = recognizer?.recognitionTask(with: request) { [weak self] result, error in
+            guard let self else { return }
+            if let result, result.isFinal {
+                let timings = self.align(
+                    segments: result.bestTranscription.segments,
+                    script: script,
+                    audioDuration: self.player?.duration ?? 0
+                )
+                DispatchQueue.main.async {
+                    guard self.preparationID == preparationID else { return }
+                    self.timedWords = timings
+                    self.isPreparing = false
+                    self.isReady = !timings.isEmpty
+                    self.status = timings.isEmpty
+                        ? "Could not match audio to this script"
+                        : "Ready — press Play"
+                    self.request = nil
+                    self.task = nil
+                }
+            } else if error != nil {
+                DispatchQueue.main.async {
+                    guard self.preparationID == preparationID else { return }
+                    self.finishPreparation("Could not synchronize this audio file")
+                }
+            }
+        }
+        if task == nil { finishPreparation("Could not start audio synchronization") }
+    }
+
+    private func align(
+        segments: [SFTranscriptionSegment],
+        script: String,
+        audioDuration: TimeInterval
+    ) -> [TimedWord] {
+        let scriptWords = Self.words(in: script)
+        let tokens = Self.tokens(from: segments)
+        var scriptIndex = -1
+        var result: [TimedWord] = []
+        let orderedSegments = segments.sorted(by: { $0.timestamp < $1.timestamp })
+
+        for (tokenIndex, token) in tokens.enumerated() {
+            let start = max(0, scriptIndex + 1)
+            guard start < scriptWords.count else { break }
+
+            // The expected next word is the only single-token advancement we
+            // accept. This keeps a common word (for example "the") or a
+            // partially recognised word from silently skipping a sentence.
+            if Self.matches(scriptWord: scriptWords[start], spokenWord: token.word) {
+                scriptIndex = start
+                result.append(TimedWord(scriptIndex: start, time: token.time))
+                continue
+            }
+
+            // Recognition can omit a word or two. Recover from that only
+            // when a later recognised word corroborates the same nearby
+            // phrase. This is deliberately more conservative than the old
+            // one-word look-ahead: being momentarily behind the recording is
+            // preferable to colouring a future paragraph as already read.
+            guard token.word.count >= 4 else { continue }
+            let end = min(scriptWords.count, start + 5)
+            let candidates = scriptWords[start..<end].indices.filter {
+                Self.matches(scriptWord: scriptWords[$0], spokenWord: token.word)
+                    && Self.hasPhraseConfirmation(
+                        tokens: tokens,
+                        after: tokenIndex,
+                        scriptWords: scriptWords,
+                        scriptIndex: $0
+                    )
+            }
+            if candidates.count == 1, let match = candidates.first {
+                scriptIndex = match
+                result.append(TimedWord(scriptIndex: match, time: token.time))
+            }
+        }
+
+        // Speech URL recognition normally reports seconds from the start of
+        // the file, but its effective timebase can be shorter than the actual
+        // AVAudioPlayer duration for certain encoded files. Calibrate only
+        // when there is a meaningful discrepancy, so a timing-map defect
+        // cannot make the script race through the audio.
+        let recognizedEnd = orderedSegments.map { $0.timestamp + $0.duration }.max() ?? 0
+        guard audioDuration > 0, recognizedEnd > 0 else { return result }
+        let scale = audioDuration / recognizedEnd
+        // A few percent over a several-minute recording is already a visible
+        // drift. Scale the full map to AVAudioPlayer's actual media duration,
+        // which is the same clock used while the audio is playing.
+        guard abs(scale - 1) > 0.025 else { return result }
+        return result.map {
+            TimedWord(
+                scriptIndex: $0.scriptIndex,
+                time: min(audioDuration, max(0, $0.time * scale))
+            )
+        }
+    }
+
+    private func startProgressTimer() {
+        progressTimer?.invalidate()
+        progressTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            self?.updateProgress()
+        }
+    }
+
+    private func updateProgress() {
+        guard let player else { return }
+        if !player.isPlaying {
+            pause()
+            return
+        }
+        let elapsed = player.currentTime
+        let maximumIndex = pacingCeiling(at: elapsed)
+        if let word = timedWords.last(where: {
+            $0.time <= elapsed && $0.scriptIndex <= maximumIndex
+        }), word.scriptIndex > currentWordIndex {
+            currentWordIndex = word.scriptIndex
+        }
+    }
+
+    /// A malformed recognition timeline must never race far ahead of a human
+    /// voice. This is a guardrail, not the normal pacing mechanism: normal
+    /// progression still comes from each recognised word's timestamp. The
+    /// ceiling is generous enough for quick narration while preventing an
+    /// invalid map from greying several paragraphs in a few seconds.
+    private func pacingCeiling(at elapsed: TimeInterval) -> Int {
+        guard audioDuration > 0, scriptWordCount > 0 else { return .max }
+        let averageWordsPerSecond = Double(scriptWordCount) / audioDuration
+        let maximumWordsPerSecond = max(5.0, averageWordsPerSecond * 2.0)
+        let graceWords = 6.0
+        return min(
+            scriptWordCount - 1,
+            Int((elapsed * maximumWordsPerSecond + graceWords).rounded(.down))
+        )
+    }
+
+    private func finishPreparation(_ message: String) {
+        isPreparing = false
+        isReady = false
+        status = message
+    }
+
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            self?.progressTimer?.invalidate()
+            self?.progressTimer = nil
+            self?.isPlaying = false
+            self?.status = "Finished — press Play to replay"
+        }
+    }
+
+    private static func tokens(from segments: [SFTranscriptionSegment]) -> [TranscriptToken] {
+        segments
+            .sorted(by: { $0.timestamp < $1.timestamp })
+            .flatMap { segment in
+                let words = Self.words(in: segment.substring)
+                guard !words.isEmpty else { return [TranscriptToken]() }
+                let interval = segment.duration / Double(words.count)
+                return words.enumerated().map { index, word in
+                    TranscriptToken(
+                        word: word,
+                        time: segment.timestamp + (Double(index) * interval)
+                    )
+                }
+            }
+    }
+
+    private static func words(in text: String) -> [String] {
+        text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
+    }
+
+    private static func normalized(_ word: String) -> String {
+        word.lowercased().filter { $0.isLetter || $0.isNumber }
+    }
+
+    private static func matches(scriptWord: String, spokenWord: String) -> Bool {
+        let script = normalized(scriptWord)
+        return script == spokenWord || (spokenWord.count >= 4 && script.contains(spokenWord))
+    }
+
+    private static func hasPhraseConfirmation(
+        tokens: [TranscriptToken],
+        after tokenIndex: Int,
+        scriptWords: [String],
+        scriptIndex: Int
+    ) -> Bool {
+        let scriptStart = scriptIndex + 1
+        let scriptEnd = min(scriptWords.count, scriptStart + 4)
+        guard scriptStart < scriptEnd else { return false }
+
+        // One nearby, substantive following word is enough confirmation.
+        // We deliberately inspect only a short phrase so a later repeated
+        // word cannot validate an otherwise unsafe jump.
+        let following = tokens.dropFirst(tokenIndex + 1).prefix(4)
+        return following.contains { token in
+            token.word.count >= 3
+                && scriptWords[scriptStart..<scriptEnd].contains(where: {
+                    matches(scriptWord: $0, spokenWord: token.word)
+                })
+        }
+    }
+}
+
 @MainActor
 final class PrompterModel: ObservableObject {
     @Published var script = "Welcome to EchoPrompt.\n\nPaste your script here, then start EchoPrompt when you are ready."
@@ -401,6 +778,7 @@ final class PrompterModel: ObservableObject {
     /// its local playback and highlighting state.
     @Published private(set) var presentationSessionID = UUID()
     let voiceScroll = VoiceScrollController()
+    let recordedAudio = RecordedAudioController()
     /// Lets the presenter click through the floating prompt onto VS Code.
     @Published var clickThroughPresentation = false {
         didSet { panel?.ignoresMouseEvents = clickThroughPresentation }
@@ -497,7 +875,7 @@ final class PrompterModel: ObservableObject {
     func chooseAudioFile() {
         let panel = NSOpenPanel()
         panel.title = "Choose recorded audio"
-        panel.message = "Choose an audio file for future script synchronization."
+        panel.message = "Choose the recorded audio that EchoPrompt should synchronize with this script."
         panel.allowedContentTypes = [.audio]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
@@ -510,6 +888,7 @@ final class PrompterModel: ObservableObject {
         // Reopening a retained NSPanel must behave exactly like a first run:
         // no prior scroll position, highlighted word, or live voice session.
         voiceScroll.stop()
+        recordedAudio.stop()
         presentationSessionID = UUID()
         workspaceWindow = NSApp.keyWindow
         workspaceWindow?.orderOut(nil)
@@ -541,6 +920,7 @@ final class PrompterModel: ObservableObject {
 
     func closePrompter() {
         voiceScroll.stop()
+        recordedAudio.stop()
         panel?.orderOut(nil)
         restoreWorkspace()
     }
@@ -617,7 +997,7 @@ struct EditorView: View {
                                 Text(model.audioFileURL?.lastPathComponent ?? "No file selected")
                                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
-                            Text("Audio-synced scrolling will be added next. Your selected file stays local to this Mac.")
+                            Text("EchoPrompt will transcribe this local file once, then follow its playback word by word.")
                                 .font(.caption).foregroundStyle(.secondary)
                         } else if model.controlMode == .voice {
                             Text("Access is requested now while Script Studio stays visible. EchoPrompt listens only when you start presenting.")
@@ -674,7 +1054,11 @@ struct EditorView: View {
             model.restoreWorkspace()
         }
         .onChange(of: model.controlMode) { mode in
-            if mode == .voice { model.voiceScroll.preparePermissions() }
+            if mode == .voice {
+                model.voiceScroll.preparePermissions()
+            } else if mode == .recordedAudio {
+                model.recordedAudio.preparePermissions()
+            }
         }
     }
 }
@@ -770,6 +1154,7 @@ struct SmoothSlider: NSViewRepresentable {
 struct PromptView: View {
     @ObservedObject var model: PrompterModel
     @ObservedObject private var voice: VoiceScrollController
+    @ObservedObject private var recordedAudio: RecordedAudioController
     @State private var isPlaying = false
     @State private var showTextAppearance = false
     /// The exact position confirmed by Speech recognition.
@@ -789,19 +1174,62 @@ struct PromptView: View {
     init(model: PrompterModel) {
         self.model = model
         self._voice = ObservedObject(wrappedValue: model.voiceScroll)
+        self._recordedAudio = ObservedObject(wrappedValue: model.recordedAudio)
     }
 
     private var playbackRate: Double { model.speed / baseSpeed }
     private var playbackRateLabel: String { String(format: "%.2f×", playbackRate) }
     private var displayWordIndex: Int {
-        max(activeWordIndex, predictedWordIndex)
+        switch model.controlMode {
+        case .voice:
+            max(activeWordIndex, predictedWordIndex)
+        case .recordedAudio:
+            recordedAudio.currentWordIndex
+        case .normal:
+            -1
+        }
     }
     private var readingProgress: PromptReadingProgress {
-        guard model.controlMode == .voice else { return .inactive }
-        return .synchronized(
-            confirmed: activeWordIndex,
-            predicted: predictedWordIndex >= 0 ? predictedWordIndex : nil
-        )
+        switch model.controlMode {
+        case .voice:
+            return .synchronized(
+                confirmed: activeWordIndex,
+                predicted: predictedWordIndex >= 0 ? predictedWordIndex : nil
+            )
+        case .recordedAudio:
+            return .synchronized(confirmed: recordedAudio.currentWordIndex, predicted: nil)
+        case .normal:
+            return .inactive
+        }
+    }
+    private var controlButtonTitle: String {
+        switch model.controlMode {
+        case .voice: return voice.isListening ? "Listening" : "Start voice"
+        case .recordedAudio:
+            return recordedAudio.isPreparing ? "Preparing" : (recordedAudio.isPlaying ? "Pause" : "Play")
+        case .normal: return isPlaying ? "Pause" : "Play"
+        }
+    }
+    private var controlButtonDetail: String {
+        switch model.controlMode {
+        case .voice: return "live follow"
+        case .recordedAudio: return recordedAudio.isPreparing ? "syncing words" : "recorded audio"
+        case .normal: return playbackRateLabel
+        }
+    }
+    private var controlButtonIcon: String {
+        switch model.controlMode {
+        case .voice: return "mic.fill"
+        case .recordedAudio, .normal:
+            return (model.controlMode == .recordedAudio ? recordedAudio.isPlaying : isPlaying) ? "pause.fill" : "play.fill"
+        }
+    }
+    private var footerMessage: String {
+        switch model.controlMode {
+        case .voice: return "\(voice.status)  •  Heard: \(voice.heardWords)"
+        case .recordedAudio: return "\(recordedAudio.status)  •  Esc: close"
+        case .normal: return "Space: play or pause   •   Esc: close   •   Reading pace: \(playbackRateLabel)"
+        }
     }
 
     private func changeSpeed(forward: Bool) {
@@ -916,6 +1344,11 @@ struct PromptView: View {
         isPlaying = false
         scrollResetToken = UUID()
 
+        if model.controlMode == .recordedAudio {
+            recordedAudio.restart()
+            lastScrolledWordIndex = -1
+            return
+        }
         guard model.controlMode == .voice else { return }
         // A Voice-mode restart is a complete fresh read, not merely a visual
         // scroll reset. Otherwise recognition would continue matching from the
@@ -954,7 +1387,7 @@ struct PromptView: View {
                     // the presenter between spoken passages.
                     .scrollDisabled(model.controlMode == .normal)
                     .onChange(of: displayWordIndex) { index in
-                        guard model.controlMode == .voice, index >= 0 else { return }
+                        guard model.controlMode != .normal, index >= 0 else { return }
                         // A predictive cue may disappear during a short pause.
                         // Do not visibly pull the prompt backward in response.
                         guard index >= lastScrolledWordIndex else { return }
@@ -990,7 +1423,11 @@ struct PromptView: View {
                     Spacer()
                     VStack(spacing: 2) {
                         Text(model.controlMode.name.uppercased())
-                        Text(model.controlMode == .voice ? voice.status.uppercased() : (isPlaying ? "SCROLLING" : "PAUSED"))
+                        Text(
+                            model.controlMode == .voice ? voice.status.uppercased()
+                                : (model.controlMode == .recordedAudio ? recordedAudio.status.uppercased()
+                                    : (isPlaying ? "SCROLLING" : "PAUSED"))
+                        )
                     }
                     .font(.caption.bold()).foregroundStyle(.white.opacity(0.9))
                     Spacer()
@@ -1009,18 +1446,21 @@ struct PromptView: View {
                             HStack(spacing: 12) {
                                 PromptControlButton(
                                     title: "Slower",
-                                    detail: model.controlMode == .voice ? "voice paced" : "− speed",
+                                    detail: model.controlMode == .voice ? "voice paced" : (model.controlMode == .recordedAudio ? "audio paced" : "− speed"),
                                     icon: "tortoise",
-                                    isDisabled: model.controlMode == .voice
+                                    isDisabled: model.controlMode != .normal
                                 ) { changeSpeed(forward: false) }
                                 PromptControlButton(
-                                    title: model.controlMode == .voice ? (voice.isListening ? "Listening" : "Start voice") : (isPlaying ? "Pause" : "Play"),
-                                    detail: model.controlMode == .voice ? "live follow" : playbackRateLabel,
-                                    icon: model.controlMode == .voice ? "mic.fill" : (isPlaying ? "pause.fill" : "play.fill"),
-                                    prominent: true
+                                    title: controlButtonTitle,
+                                    detail: controlButtonDetail,
+                                    icon: controlButtonIcon,
+                                    prominent: true,
+                                    isDisabled: model.controlMode == .recordedAudio && !recordedAudio.isReady
                                 ) {
                                     if model.controlMode == .voice {
                                         voice.isListening ? voice.stop() : voice.start(context: scriptWords)
+                                    } else if model.controlMode == .recordedAudio {
+                                        recordedAudio.togglePlayback()
                                     } else {
                                         isPlaying.toggle()
                                     }
@@ -1028,9 +1468,9 @@ struct PromptView: View {
                                     .keyboardShortcut(.space, modifiers: [])
                                 PromptControlButton(
                                     title: "Faster",
-                                    detail: model.controlMode == .voice ? "voice paced" : "+ speed",
+                                    detail: model.controlMode == .voice ? "voice paced" : (model.controlMode == .recordedAudio ? "audio paced" : "+ speed"),
                                     icon: "hare",
-                                    isDisabled: model.controlMode == .voice
+                                    isDisabled: model.controlMode != .normal
                                 ) { changeSpeed(forward: true) }
                                 PromptControlButton(title: "Text", detail: "Aa", icon: "textformat") { showTextAppearance.toggle() }
                                     .popover(isPresented: $showTextAppearance, arrowEdge: .bottom) {
@@ -1045,11 +1485,13 @@ struct PromptView: View {
                         }
                     }
                     .frame(height: 58)
-                    Text(model.controlMode == .voice
-                         ? "\(voice.status)  •  Heard: \(voice.heardWords)"
-                         : "Space: play or pause   •   Esc: close   •   Reading pace: \(playbackRateLabel)")
+                    Text(footerMessage)
                         .font(.caption)
-                        .foregroundStyle(model.controlMode == .voice && !voice.isListening ? .orange : .white.opacity(0.7))
+                        .foregroundStyle(
+                            (model.controlMode == .voice && !voice.isListening)
+                                || (model.controlMode == .recordedAudio && !recordedAudio.isReady)
+                                ? .orange : .white.opacity(0.7)
+                        )
                 }
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)
@@ -1079,7 +1521,12 @@ struct PromptView: View {
             lastTick = Date()
             showTextAppearance = false
             voice.stop()
-            if model.controlMode == .voice { voice.start(context: scriptWords) }
+            recordedAudio.stop()
+            if model.controlMode == .voice {
+                voice.start(context: scriptWords)
+            } else if model.controlMode == .recordedAudio {
+                recordedAudio.prepare(audioURL: model.audioFileURL, script: model.script)
+            }
         }
         .onChange(of: voice.isListening) { listening in
             // Each deliberate voice session starts at the beginning, rather
@@ -1099,6 +1546,9 @@ struct PromptView: View {
                 predictedWordIndex = -1
                 lastScrolledWordIndex = -1
                 voice.start(context: scriptWords)
+            } else if model.controlMode == .recordedAudio {
+                lastScrolledWordIndex = -1
+                recordedAudio.prepare(audioURL: model.audioFileURL, script: model.script)
             }
         }
         .onChange(of: model.controlMode) { mode in
@@ -1107,8 +1557,15 @@ struct PromptView: View {
                 predictedWordIndex = -1
                 lastScrolledWordIndex = -1
                 voice.start(context: scriptWords)
+            } else if mode == .recordedAudio {
+                voice.stop()
+                activeWordIndex = -1
+                predictedWordIndex = -1
+                lastScrolledWordIndex = -1
+                recordedAudio.prepare(audioURL: model.audioFileURL, script: model.script)
             } else {
                 voice.stop()
+                recordedAudio.stop()
                 predictedWordIndex = -1
             }
         }
