@@ -211,7 +211,7 @@ The current layout stays: the header with Edit script, mode/status and restart, 
 
 ### 7.3 `.notch`
 - Same as compact, with these differences: the hover bar appears **below** the panel's bottom edge and reveals on hover over the panel, and the text is centered with line count driven by height.
-- The current reading line sits in the upper part of the body in Voice and Recorded modes. In notch layout the scroll anchor is `UnitPoint(x: 0.5, y: 0.4)`, which keeps the live word near the camera with room above it.
+- The current reading line sits in the upper part of the body in Voice and Recorded modes. In notch layout the live word rests 40% down the body (centered, 50%, elsewhere), which keeps it near the camera with room above it. Voice and Recorded modes ease the shared scroll offset toward that point every frame; they no longer use `ScrollViewReader.scrollTo`, which snapped a whole line at a time.
 - In Normal mode, the first line starts about 35% of the way down the body, so each line stays readable for a moment before it scrolls out.
 - Notch and compact layouts fade text out over the top 22% of the script area instead of cutting it off.
 

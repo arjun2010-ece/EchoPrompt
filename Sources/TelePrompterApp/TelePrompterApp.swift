@@ -314,6 +314,8 @@ final class VoiceScrollController: NSObject, ObservableObject {
         task?.cancel()
         request = nil
         task = nil
+        // Otherwise the stale "Listening…" text would outlive the microphone.
+        if isListening { status = "Microphone off" }
         isListening = false
         isStarting = false
         isSpeaking = false
@@ -1781,6 +1783,10 @@ struct PromptView: View {
     /// Explicitly resets ScrollViewReader's retained position on a new run.
     @State private var scrollResetToken = UUID()
     @State private var offset: CGFloat = 0
+    /// Where Voice and Recorded modes want `offset` to be. Only ever moves
+    /// forward; `offset` glides toward it every frame instead of jumping.
+    @State private var followTarget: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var lastTick = Date()
     @State private var hoverBarVisible = false
     /// Invalidates pending hide-after-delay work when the pointer re-enters.
@@ -1823,7 +1829,7 @@ struct PromptView: View {
     }
     private var controlButtonTitle: String {
         switch model.controlMode {
-        case .voice: return voice.isListening ? "Listening" : "Start voice"
+        case .voice: return voice.isStarting ? "Starting" : (voice.isListening ? "Listening" : "Start voice")
         case .recordedAudio:
             return recordedAudio.isPreparing ? "Preparing" : (recordedAudio.isPlaying ? "Pause" : "Play")
         case .normal: return isPlaying ? "Pause" : "Play"
@@ -1831,21 +1837,41 @@ struct PromptView: View {
     }
     private var controlButtonDetail: String {
         switch model.controlMode {
-        case .voice: return "live follow"
+        case .voice:
+            if voice.isListening { return voice.isSpeaking ? "hearing you" : "waiting for speech" }
+            return voice.isStarting ? "preparing mic" : "tap to start"
         case .recordedAudio: return recordedAudio.isPreparing ? "syncing words" : "recorded audio"
         case .normal: return playbackRateLabel
         }
     }
     private var controlButtonIcon: String {
         switch model.controlMode {
-        case .voice: return "mic.fill"
+        case .voice: return voice.isStarting ? "mic" : (voice.isListening ? "mic.fill" : "mic.slash.fill")
         case .recordedAudio, .normal:
             return (model.controlMode == .recordedAudio ? recordedAudio.isPlaying : isPlaying) ? "pause.fill" : "play.fill"
         }
     }
+    /// Short state for the header, derived from the microphone itself so it
+    /// can never describe a state the microphone is not in.
+    private var voiceHeadline: String {
+        if voice.isStarting { return "Starting microphone…" }
+        if voice.isListening { return voice.isSpeaking ? "Hearing you" : "Listening" }
+        return "Microphone off"
+    }
+    private var voiceFooter: String {
+        if voice.isStarting { return voice.status }
+        if voice.isListening {
+            let prefix = voice.isSpeaking ? "Hearing you" : "Listening — start reading your script"
+            return "\(prefix)  •  Heard: \(voice.heardWords)"
+        }
+        let neutral = ["Voice control is ready", "Voice mode is ready"].contains(voice.status) || voice.status.hasPrefix("Microphone off")
+        return neutral
+            ? "Microphone off  •  Press Space or Start voice to resume listening"
+            : "Microphone off  •  \(voice.status)"
+    }
     private var footerMessage: String {
         switch model.controlMode {
-        case .voice: return "\(voice.status)  •  Heard: \(voice.heardWords)"
+        case .voice: return voiceFooter
         case .recordedAudio: return "\(recordedAudio.status)  •  Esc: close"
         case .normal: return "Space: play or pause   •   Esc: close   •   Reading pace: \(playbackRateLabel)"
         }
@@ -1857,10 +1883,25 @@ struct PromptView: View {
     }
     private var compactStatus: String {
         switch model.controlMode {
-        case .voice: return "\(voice.status)  •  Heard: \(voice.heardWords)"
+        case .voice: return voiceFooter
         case .recordedAudio: return recordedAudio.status
         case .normal: return "\(isPlaying ? "Scrolling" : "Paused")  •  \(playbackRateLabel)"
         }
+    }
+    /// The voice button changes colour with the microphone's real state;
+    /// other modes keep the accent colour.
+    private var primaryTint: Color? {
+        guard model.controlMode == .voice else { return nil }
+        if voice.isStarting { return .orange }
+        return voice.isListening ? Color(red: 0.16, green: 0.62, blue: 0.32) : Color(red: 0.78, green: 0.22, blue: 0.2)
+    }
+    private var primaryIsPulsing: Bool {
+        model.controlMode == .voice && voice.isListening && voice.isSpeaking
+    }
+    private var primaryAccessibilityValue: String {
+        guard model.controlMode == .voice else { return "" }
+        if voice.isStarting { return "Starting" }
+        return voice.isListening ? (voice.isSpeaking ? "Listening, speech detected" : "Listening") : "Off"
     }
     private var primaryActionDisabled: Bool { model.controlMode == .recordedAudio && !recordedAudio.isReady }
 
@@ -2015,6 +2056,7 @@ struct PromptView: View {
         lastTick = Date()
         isPlaying = false
         scrollResetToken = UUID()
+        followTarget = 0
 
         if model.controlMode == .recordedAudio {
             recordedAudio.restart()
@@ -2049,7 +2091,14 @@ struct PromptView: View {
         .onReceive(timer) { now in
             let elapsed = now.timeIntervalSince(lastTick)
             lastTick = now
-            if isPlaying && model.controlMode == .normal { offset += CGFloat(model.speed * elapsed) }
+            if isPlaying && model.controlMode == .normal {
+                offset += CGFloat(model.speed * elapsed)
+            } else if model.controlMode != .normal, abs(followTarget - offset) > 0.05 {
+                // Frame-rate independent exponential easing. A short time
+                // constant keeps up with speech; Reduce Motion shortens it.
+                let timeConstant = reduceMotion ? 0.12 : 0.38
+                offset += (followTarget - offset) * CGFloat(1 - exp(-min(elapsed, 0.1) / timeConstant))
+            }
         }
         .onReceive(voice.$newWords) { words in
             guard model.controlMode == .voice else { return }
@@ -2063,6 +2112,7 @@ struct PromptView: View {
             lastScrolledWordIndex = -1
             scrollResetToken = UUID()
             offset = 0
+            followTarget = 0
             lastTick = Date()
             showTextAppearance = false
             hoverBarVisible = false
@@ -2082,6 +2132,8 @@ struct PromptView: View {
                 activeWordIndex = -1
                 predictedWordIndex = -1
                 lastScrolledWordIndex = -1
+                offset = 0
+                followTarget = 0
             }
         }
         .onChange(of: voice.isSpeaking) { _ in
@@ -2101,6 +2153,9 @@ struct PromptView: View {
             }
         }
         .onChange(of: model.controlMode) { mode in
+            offset = 0
+            followTarget = 0
+            isPlaying = false
             if mode == .voice {
                 activeWordIndex = -1
                 predictedWordIndex = -1
@@ -2198,57 +2253,37 @@ struct PromptView: View {
 
     private func scriptArea(style: PromptLayoutStyle) -> some View {
         GeometryReader { proxy in
-            ScrollViewReader { reader in
-                ScrollView(.vertical, showsIndicators: false) {
-                    PromptWordFlow(
-                        words: scriptWords,
-                        progress: readingProgress,
-                        textColor: style == .notch ? model.notchTextColor : model.promptText,
-                        // Small layouts keep at least ~2 lines visible.
-                        fontSize: style == .full ? model.fontSize : min(model.fontSize, max(16, proxy.size.height / 3)),
-                        lineSpacing: model.lineSpacing
-                    )
-                        .padding(.horizontal, style == .full ? 56 : (style == .notch ? 16 : 20))
-                        // The notch keeps the reading line close to the camera,
-                        // but leaves room above it so a line stays readable
-                        // for a moment before it scrolls out of view.
-                        .padding(.top, style == .notch ? proxy.size.height * 0.35 : proxy.size.height * 0.42)
-                        .padding(.bottom, style == .notch ? proxy.size.height : proxy.size.height * 0.42)
-                        .scaleEffect(x: model.mirrorText ? -1 : 1, y: 1)
-                        // Normal mode retains its smooth continuous motion.
-                        // Voice mode uses the real matched word below.
-                        .offset(y: model.controlMode == .normal ? -offset : 0)
-                }
-                // Keep the continuously-scrolling mode gesture-free, but
-                // do not disable the voice ScrollView: doing so can also
-                // suppress ScrollViewReader's programmatic movement on
-                // macOS. Voice mode may additionally be repositioned by
-                // the presenter between spoken passages.
-                .scrollDisabled(model.controlMode == .normal)
-                .onChange(of: displayWordIndex) { index in
-                    guard model.controlMode != .normal, index >= 0 else { return }
-                    // A predictive cue may disappear during a short pause.
-                    // Do not visibly pull the prompt backward in response.
-                    guard index >= lastScrolledWordIndex else { return }
-                    lastScrolledWordIndex = index
-                    let anchor = style == .notch ? UnitPoint(x: 0.5, y: 0.4) : .center
-                    // The word views are created by a wrapping Layout.
-                    // Waiting one run-loop lets that layout expose the
-                    // target ID before attempting to scroll to it.
-                    DispatchQueue.main.async {
-                        withAnimation(.easeOut(duration: 0.18)) {
-                            reader.scrollTo(index, anchor: anchor)
-                        }
-                    }
-                }
-                .onChange(of: scrollResetToken) { _ in
-                    // Voice mode's ScrollView keeps its physical position
-                    // between runs. Reset it independently of the word
-                    // matcher so Restart visibly returns to the beginning.
-                    DispatchQueue.main.async {
-                        reader.scrollTo(0, anchor: .center)
-                    }
-                }
+            let topPadding = style == .notch ? proxy.size.height * 0.35 : proxy.size.height * 0.42
+            // Where the live word rests: centered, or a bit higher under the notch.
+            let anchorY = proxy.size.height * (style == .notch ? 0.4 : 0.5)
+            ScrollView(.vertical, showsIndicators: false) {
+                PromptWordFlow(
+                    words: scriptWords,
+                    progress: readingProgress,
+                    textColor: style == .notch ? model.notchTextColor : model.promptText,
+                    // Small layouts keep at least ~2 lines visible.
+                    fontSize: style == .full ? model.fontSize : min(model.fontSize, max(16, proxy.size.height / 3)),
+                    lineSpacing: model.lineSpacing
+                )
+                    .padding(.horizontal, style == .full ? 56 : (style == .notch ? 16 : 20))
+                    // The notch keeps the reading line close to the camera,
+                    // but leaves room above it so a line stays readable
+                    // for a moment before it scrolls out of view.
+                    .padding(.top, topPadding)
+                    .padding(.bottom, style == .notch ? proxy.size.height : proxy.size.height * 0.42)
+                    .scaleEffect(x: model.mirrorText ? -1 : 1, y: 1)
+                    // Every mode moves through this one offset: Normal adds
+                    // to it at `speed`, Voice and Recorded ease it toward
+                    // the spoken word. A ScrollView `scrollTo` could only
+                    // snap a whole line at a time, which looked like jumping.
+                    .offset(y: -offset)
+            }
+            .scrollDisabled(true)
+            .onPreferenceChange(CurrentWordPositionKey.self) { position in
+                guard model.controlMode != .normal, let position else { return }
+                // A predictive cue may disappear during a short pause.
+                // Never pull the prompt backward in response.
+                followTarget = max(followTarget, max(0, topPadding + position.midY - anchorY))
             }
         }
         // Small layouts fade lines out at the top edge instead of cutting
@@ -2277,7 +2312,7 @@ struct PromptView: View {
             VStack(spacing: 2) {
                 Text(model.controlMode.name.uppercased())
                 Text(
-                    model.controlMode == .voice ? voice.status.uppercased()
+                    model.controlMode == .voice ? voiceHeadline.uppercased()
                         : (model.controlMode == .recordedAudio ? recordedAudio.status.uppercased()
                             : (isPlaying ? "SCROLLING" : "PAUSED"))
                 )
@@ -2314,6 +2349,9 @@ struct PromptView: View {
                             detail: controlButtonDetail,
                             icon: controlButtonIcon,
                             prominent: true,
+                            tint: primaryTint,
+                            pulsing: primaryIsPulsing,
+                            accessibilityValue: primaryAccessibilityValue,
                             isDisabled: primaryActionDisabled,
                             action: primaryAction
                         )
@@ -2352,7 +2390,7 @@ struct PromptView: View {
     private var hoverBar: some View {
         VStack(spacing: 4) {
             HStack(spacing: 4) {
-                HoverIconButton(icon: controlButtonIcon, label: controlButtonTitle, prominent: true, isDisabled: primaryActionDisabled, action: primaryAction)
+                HoverIconButton(icon: controlButtonIcon, label: controlButtonTitle, prominent: true, tint: primaryTint, pulsing: primaryIsPulsing, accessibilityValue: primaryAccessibilityValue, isDisabled: primaryActionDisabled, action: primaryAction)
                 HoverIconButton(icon: "tortoise", label: "Slower", isDisabled: model.controlMode != .normal) { changeSpeed(forward: false) }
                 HoverIconButton(icon: "hare", label: "Faster", isDisabled: model.controlMode != .normal) { changeSpeed(forward: true) }
                 HoverIconButton(icon: "arrow.counterclockwise", label: "Restart from the beginning", action: restartPrompt)
@@ -2478,6 +2516,19 @@ struct PromptView: View {
 /// Places every script word as an individually addressable view. That is the
 /// key difference from a single concatenated Text: voice mode can scroll to
 /// the exact spoken word and reliably apply its orange underline.
+struct CurrentWordPosition: Equatable { var index: Int; var midY: CGFloat }
+
+/// Carries the vertical position of the furthest highlighted word, in the
+/// word flow's own coordinate space, up to the view that scrolls it.
+struct CurrentWordPositionKey: PreferenceKey {
+    static var defaultValue: CurrentWordPosition? { nil }
+    static func reduce(value: inout CurrentWordPosition?, nextValue: () -> CurrentWordPosition?) {
+        guard let next = nextValue() else { return }
+        if let current = value, current.index >= next.index { return }
+        value = next
+    }
+}
+
 struct PromptWordFlow: View {
     let words: [String]
     let progress: PromptReadingProgress
@@ -2500,9 +2551,22 @@ struct PromptWordFlow: View {
                         color: state == .current ? .orange : .orange.opacity(0.55)
                     )
                     .id(item.offset)
+                    .background {
+                        // Only the live word measures itself; thousands of
+                        // GeometryReaders would be wasteful.
+                        if state == .current || state == .predicted {
+                            GeometryReader { geometry in
+                                Color.clear.preference(
+                                    key: CurrentWordPositionKey.self,
+                                    value: CurrentWordPosition(index: item.offset, midY: geometry.frame(in: .named("promptFlow")).midY)
+                                )
+                            }
+                        }
+                    }
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
+        .coordinateSpace(name: "promptFlow")
     }
 
     private func color(for state: PromptReadingProgress.WordState) -> Color {
@@ -2617,21 +2681,30 @@ struct HoverIconButton: View {
     let icon: String
     let label: String
     var prominent = false
+    var tint: Color?
+    var pulsing = false
+    var accessibilityValue = ""
     var isDisabled = false
     let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(.white)
+                .scaleEffect(pulsing && !reduceMotion ? 1.18 : 1)
                 .frame(width: 28, height: 24)
-                .background(prominent ? Color.accentColor : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                .background((prominent ? (tint ?? .accentColor) : Color.white.opacity(0.12)), in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(pulsing ? 0.9 : 0), lineWidth: 1.5))
+                .animation(.easeInOut(duration: 0.2), value: pulsing)
+                .animation(.easeInOut(duration: 0.2), value: tint)
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
         .opacity(isDisabled ? 0.4 : 1)
         .accessibilityLabel(label)
+        .accessibilityValue(accessibilityValue)
     }
 }
 
@@ -2640,13 +2713,19 @@ struct PromptControlButton: View {
     let detail: String
     let icon: String
     var prominent = false
+    var tint: Color?
+    var pulsing = false
+    var accessibilityValue = ""
     var isDisabled = false
     let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 9) {
-                Image(systemName: icon).font(.body.weight(.bold))
+                Image(systemName: icon)
+                    .font(.body.weight(.bold))
+                    .scaleEffect(pulsing && !reduceMotion ? 1.2 : 1)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title).font(.callout.weight(.bold))
                     Text(detail).font(.caption2.weight(.medium)).foregroundStyle(.white.opacity(0.8))
@@ -2655,12 +2734,17 @@ struct PromptControlButton: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(prominent ? Color.accentColor : Color(red: 0.22, green: 0.22, blue: 0.24), in: RoundedRectangle(cornerRadius: 9))
+                .background(prominent ? (tint ?? .accentColor) : Color(red: 0.22, green: 0.22, blue: 0.24), in: RoundedRectangle(cornerRadius: 9))
+                // A white ring shows live speech, not just a colour change.
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.white.opacity(pulsing ? 0.9 : 0), lineWidth: 2))
+                .animation(.easeInOut(duration: 0.2), value: pulsing)
+                .animation(.easeInOut(duration: 0.2), value: tint)
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
         .opacity(isDisabled ? 0.42 : 1)
         .accessibilityLabel(title)
+        .accessibilityValue(accessibilityValue)
     }
 }
 
