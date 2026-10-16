@@ -2,6 +2,8 @@ import SwiftUI
 import AppKit
 import Combine
 import UniformTypeIdentifiers
+import Speech
+import AVFoundation
 
 extension Notification.Name {
     static let restoreEchoPromptWorkspace = Notification.Name("restoreEchoPromptWorkspace")
@@ -91,6 +93,216 @@ enum PromptControlMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// On-device live transcription for Voice mode. It emits only newly recognized
+/// words, so the prompt can ignore filler words that don't occur in the script.
+final class VoiceScrollController: NSObject, ObservableObject {
+    @Published private(set) var status = "Voice control is ready"
+    /// A short, privacy-conscious diagnostic that confirms the recognizer is
+    /// receiving speech. It also makes a silent recognizer failure apparent.
+    @Published private(set) var heardWords = "Waiting for speech"
+    @Published private(set) var newWords: [String] = []
+    @Published private(set) var isListening = false
+    @Published private(set) var isStarting = false
+    /// Fast local voice-activity detection. Unlike transcription, this does
+    /// not need to wait for a full word before it can react.
+    @Published private(set) var isSpeaking = false
+
+    // Match the language selected for macOS Dictation/Speech Recognition.
+    // Hard-coding en-US can otherwise produce no useful results for a Mac
+    // configured for another supported English locale.
+    private let recognizer = SFSpeechRecognizer(locale: .current)
+    private let audioEngine = AVAudioEngine()
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+    private var sessionID = UUID()
+    private var lastSpeechSignalAt = Date.distantPast
+    private var audioBufferCount = 0
+    private let speechThreshold: Float = 0.006
+    /// Accessing AVAudioEngine.inputNode can itself initiate protected audio
+    /// input. Keep track of an installed tap so Normal mode never touches it.
+    private var hasActiveAudioTap = false
+
+    func start(context: [String] = []) {
+        guard !isListening, !isStarting else { return }
+        // `swift run` launches a bare executable, not an app bundle. macOS
+        // terminates processes that request protected resources without these
+        // purpose strings, so fail safely with a useful development message.
+        guard Bundle.main.object(forInfoDictionaryKey: "NSMicrophoneUsageDescription") != nil,
+              Bundle.main.object(forInfoDictionaryKey: "NSSpeechRecognitionUsageDescription") != nil else {
+            status = "Voice mode requires the packaged EchoPrompt.app"
+            return
+        }
+        guard recognizer?.isAvailable == true else {
+            status = "Speech recognition is currently unavailable"
+            return
+        }
+        isStarting = true
+        status = "Requesting speech permission…"
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized:
+            requestMicrophoneAccess(context: context)
+        case .notDetermined:
+            SFSpeechRecognizer.requestAuthorization { [weak self] authorization in
+                DispatchQueue.main.async {
+                    guard authorization == .authorized else { self?.fail("Allow Speech Recognition to use Voice mode"); return }
+                    self?.requestMicrophoneAccess(context: context)
+                }
+            }
+        case .denied, .restricted:
+            fail("Allow Speech Recognition in System Settings")
+        @unknown default:
+            fail("Speech Recognition permission is unavailable")
+        }
+    }
+
+    private func requestMicrophoneAccess(context: [String]) {
+        status = "Requesting microphone permission…"
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            beginSession(context: context)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                DispatchQueue.main.async {
+                    guard granted else { self?.fail("Allow Microphone access to use Voice mode"); return }
+                    self?.beginSession(context: context)
+                }
+            }
+        case .denied, .restricted:
+            fail("Allow Microphone access in System Settings")
+        @unknown default:
+            fail("Microphone permission is unavailable")
+        }
+    }
+
+    private func fail(_ message: String) {
+        isStarting = false
+        isListening = false
+        status = message
+    }
+
+    func stop() {
+        // Ignore delayed callbacks from a task that has just been cancelled.
+        sessionID = UUID()
+        if hasActiveAudioTap {
+            audioEngine.stop()
+            audioEngine.inputNode.removeTap(onBus: 0)
+            hasActiveAudioTap = false
+        }
+        request?.endAudio()
+        task?.cancel()
+        request = nil
+        task = nil
+        isListening = false
+        isStarting = false
+        isSpeaking = false
+    }
+
+    private func beginSession(context: [String]) {
+        let newSessionID = UUID()
+        stop()
+        sessionID = newSessionID
+
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        request.taskHint = .dictation
+        // Prefer the local recognizer when macOS has a speech model installed.
+        // It removes the network round trip and produces partial words sooner.
+        if recognizer?.supportsOnDeviceRecognition == true {
+            request.requiresOnDeviceRecognition = true
+        }
+        // The script gives the recognizer useful vocabulary (product names,
+        // acronyms, and uncommon terms) without sending anything anywhere.
+        request.contextualStrings = Array(context.prefix(100))
+        self.request = request
+        heardWords = "Waiting for speech"
+        lastSpeechSignalAt = .distantPast
+        audioBufferCount = 0
+        isSpeaking = false
+        let input = audioEngine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            fail("No microphone input is available")
+            return
+        }
+        input.installTap(onBus: 0, bufferSize: 512, format: format) { [weak self, weak request] buffer, _ in
+            request?.append(buffer)
+            self?.processVoiceActivity(in: buffer, sessionID: newSessionID)
+        }
+        hasActiveAudioTap = true
+
+        // Create the speech task before audio starts arriving. This is the
+        // lifecycle recommended by Apple's Speech sample and avoids dropping
+        // the initial spoken phrase while the task is being established.
+        task = recognizer?.recognitionTask(with: request) { [weak self] result, error in
+            guard let self, self.sessionID == newSessionID else { return }
+            if let result {
+                let words = Self.words(in: result.bestTranscription.formattedString)
+                if !words.isEmpty {
+                    DispatchQueue.main.async {
+                        guard self.sessionID == newSessionID else { return }
+                        self.heardWords = words.suffix(5).joined(separator: " ")
+                        // Speech can revise early words or append several
+                        // words between callbacks. Send an ordered recent
+                        // phrase every time; PromptView's forward-only matcher
+                        // decides what is genuinely ahead of the cue.
+                        self.newWords = Array(words.suffix(8))
+                    }
+                }
+            }
+            if error != nil {
+                DispatchQueue.main.async {
+                    guard self.sessionID == newSessionID, self.isListening else { return }
+                    self.stop()
+                    self.status = "Speech recognition stopped — tap Start voice to retry"
+                }
+            }
+        }
+        guard task != nil else {
+            fail("Could not start Speech Recognition")
+            stop()
+            return
+        }
+
+        do {
+            audioEngine.prepare()
+            try audioEngine.start()
+            isListening = true
+            isStarting = false
+            status = "Listening — follow the highlighted word"
+        } catch {
+            fail("Could not start the microphone")
+            stop()
+        }
+    }
+
+    private func processVoiceActivity(in buffer: AVAudioPCMBuffer, sessionID: UUID) {
+        guard let samples = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return }
+        let count = Int(buffer.frameLength)
+        var sum: Float = 0
+        for index in 0..<count {
+            let sample = samples[index]
+            sum += sample * sample
+        }
+        let rms = sqrt(sum / Float(count))
+        let now = Date()
+        if rms >= speechThreshold { lastSpeechSignalAt = now }
+
+        // Publish at roughly 20 Hz. The small silence grace window keeps the
+        // cue stable between syllables but pauses quickly when speaking stops.
+        audioBufferCount += 1
+        guard audioBufferCount.isMultiple(of: 4) else { return }
+        let speaking = now.timeIntervalSince(lastSpeechSignalAt) < 0.22
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.sessionID == sessionID else { return }
+            self.isSpeaking = speaking
+        }
+    }
+
+    private static func words(in text: String) -> [String] {
+        text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
+    }
+}
+
 @MainActor
 final class PrompterModel: ObservableObject {
     @Published var script = "Welcome to EchoPrompt.\n\nPaste your script here, then start EchoPrompt when you are ready."
@@ -102,6 +314,11 @@ final class PrompterModel: ObservableObject {
     /// Normal scrolling is deliberately the default; modes are mutually exclusive.
     @Published var controlMode: PromptControlMode = .normal
     @Published var audioFileURL: URL?
+    /// Changes whenever the presenter deliberately starts a new run. The
+    /// floating window is reused, so this is the explicit reset signal for
+    /// its local playback and highlighting state.
+    @Published private(set) var presentationSessionID = UUID()
+    let voiceScroll = VoiceScrollController()
     /// Lets the presenter click through the floating prompt onto VS Code.
     @Published var clickThroughPresentation = false {
         didSet { panel?.ignoresMouseEvents = clickThroughPresentation }
@@ -208,6 +425,10 @@ final class PrompterModel: ObservableObject {
 
     func openPrompter() {
         saveHistoryNow()
+        // Reopening a retained NSPanel must behave exactly like a first run:
+        // no prior scroll position, highlighted word, or live voice session.
+        voiceScroll.stop()
+        presentationSessionID = UUID()
         workspaceWindow = NSApp.keyWindow
         workspaceWindow?.orderOut(nil)
         if let panel { panel.ignoresMouseEvents = clickThroughPresentation; panel.makeKeyAndOrderFront(nil); return }
@@ -237,6 +458,7 @@ final class PrompterModel: ObservableObject {
     }
 
     func closePrompter() {
+        voiceScroll.stop()
         panel?.orderOut(nil)
         restoreWorkspace()
     }
@@ -294,7 +516,7 @@ struct EditorView: View {
                 HStack(alignment: .top, spacing: 14) {
                     EditorCard(title: "Reading pace", icon: "gauge.with.dots.needle.33percent") {
                         ControlLabel(title: "Text size", value: model.fontSize, suffix: " pt")
-                        SmoothSlider(value: $model.fontSize, range: 24...110)
+                        SmoothSlider(value: $model.fontSize, range: 16...110)
                         ControlLabel(title: "Line spacing", value: model.lineSpacing, suffix: "×")
                         SmoothSlider(value: $model.lineSpacing, range: 0.9...2.0)
                         ControlLabel(title: "Scroll speed", value: model.speed, suffix: " px/s")
@@ -316,7 +538,7 @@ struct EditorView: View {
                             Text("Audio-synced scrolling will be added next. Your selected file stays local to this Mac.")
                                 .font(.caption).foregroundStyle(.secondary)
                         } else if model.controlMode == .voice {
-                            Text("Voice control will use live speech commands when implemented.")
+                            Text("The prompt follows your live speech and pauses when you pause.")
                                 .font(.caption).foregroundStyle(.secondary)
                         } else {
                             Text("Automatic scrolling with on-screen controls.")
@@ -462,16 +684,33 @@ struct SmoothSlider: NSViewRepresentable {
 
 struct PromptView: View {
     @ObservedObject var model: PrompterModel
+    @ObservedObject private var voice: VoiceScrollController
     @State private var isPlaying = false
     @State private var showTextAppearance = false
+    /// The exact position confirmed by Speech recognition.
+    @State private var activeWordIndex = -1
+    /// A deliberately bounded, immediate cue driven by microphone activity.
+    /// It never gets more than one word ahead of the confirmed position.
+    @State private var predictedWordIndex = -1
+    @State private var lastScrolledWordIndex = -1
+    /// Explicitly resets ScrollViewReader's retained position on a new run.
+    @State private var scrollResetToken = UUID()
     @State private var offset: CGFloat = 0
     @State private var lastTick = Date()
     private let timer = Timer.publish(every: 1.0 / 60.0, on: .main, in: .common).autoconnect()
     private let baseSpeed: Double = 24
     private let speedSteps: [Double] = [0.75, 0.85, 1.0, 1.15, 1.25, 1.5, 1.75, 2.0]
 
+    init(model: PrompterModel) {
+        self.model = model
+        self._voice = ObservedObject(wrappedValue: model.voiceScroll)
+    }
+
     private var playbackRate: Double { model.speed / baseSpeed }
     private var playbackRateLabel: String { String(format: "%.2f×", playbackRate) }
+    private var displayWordIndex: Int {
+        max(activeWordIndex, predictedWordIndex)
+    }
 
     private func changeSpeed(forward: Bool) {
         let current = playbackRate
@@ -484,26 +723,168 @@ struct PromptView: View {
         }
     }
 
+    private var scriptWords: [String] { model.script.split(whereSeparator: { $0.isWhitespace }).map(String.init) }
+
+    private func normalized(_ word: String) -> String {
+        word.lowercased().filter { $0.isLetter || $0.isNumber }
+    }
+
+    private func follow(spoken words: [String]) {
+        guard !scriptWords.isEmpty else { return }
+        var nextIndex = activeWordIndex
+
+        // Consume words in the order they were spoken. A short word such as
+        // "the" or "to" may advance only when it is the next expected script
+        // word. This prevents common words from causing random jumps.
+        for (spokenIndex, spokenWord) in words.enumerated() {
+            let target = normalized(spokenWord)
+            guard !target.isEmpty else { continue }
+            let start = max(0, nextIndex + 1)
+            guard start < scriptWords.count else { break }
+
+            if wordsMatch(scriptWords[start], target) {
+                nextIndex = start
+                continue
+            }
+
+            guard target.count >= 4 else { continue }
+
+            // First recover a nearby skipped/misheard word. This is common in
+            // partial transcription and is safe because the window is small.
+            let nearbyEnd = min(scriptWords.count, start + 8)
+            if let match = scriptWords[start..<nearbyEnd].firstIndex(where: { wordsMatch($0, target) }) {
+                nextIndex = match
+                continue
+            }
+
+            // A recognizer may deliver only the tail of a longer phrase after
+            // revising its interim transcript. Recover only a short distance
+            // and only when the *following* recognized word confirms the same
+            // script phrase. A single word is not enough evidence: it caused
+            // the previous version to jump across several sentences.
+            guard target.count >= 5 else { continue }
+            let recoveryEnd = min(scriptWords.count, start + 20)
+            let candidates = scriptWords[start..<recoveryEnd].indices.filter { candidate in
+                wordsMatch(scriptWords[candidate], target)
+                    && hasPhraseConfirmation(
+                        spokenWords: words,
+                        after: spokenIndex,
+                        scriptIndex: candidate
+                    )
+            }
+            if candidates.count == 1, let match = candidates.first {
+                nextIndex = match
+            }
+        }
+        // Publish once per recognition result, so the scrolling animation is
+        // not restarted for every word in the same spoken phrase.
+        if nextIndex != activeWordIndex { activeWordIndex = nextIndex }
+    }
+
+    private func wordsMatch(_ scriptWord: String, _ spokenWord: String) -> Bool {
+        let expected = normalized(scriptWord)
+        return expected == spokenWord || (spokenWord.count >= 4 && expected.contains(spokenWord))
+    }
+
+    /// Looks for a second nearby word from the same spoken phrase. It is used
+    /// only for short recovery, never for ordinary word-by-word following.
+    private func hasPhraseConfirmation(spokenWords: [String], after spokenIndex: Int, scriptIndex: Int) -> Bool {
+        let followingWords = spokenWords.dropFirst(spokenIndex + 1)
+        let scriptStart = scriptIndex + 1
+        let scriptEnd = min(scriptWords.count, scriptStart + 4)
+        guard scriptStart < scriptEnd else { return false }
+
+        for followingWord in followingWords {
+            let target = normalized(followingWord)
+            guard target.count >= 3 else { continue }
+            if scriptWords[scriptStart..<scriptEnd].contains(where: { wordsMatch($0, target) }) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func updatePredictiveCue() {
+        guard model.controlMode == .voice,
+              voice.isListening,
+              voice.isSpeaking,
+              !scriptWords.isEmpty else {
+            predictedWordIndex = -1
+            return
+        }
+        // React on microphone activity immediately, but lead the confirmed
+        // word by only one position. This improves perceived latency without
+        // turning audio-level detection into uncontrolled auto-scrolling.
+        predictedWordIndex = min(scriptWords.count - 1, max(0, activeWordIndex + 1))
+    }
+
+    private func restartPrompt() {
+        offset = 0
+        lastTick = Date()
+        isPlaying = false
+        scrollResetToken = UUID()
+
+        guard model.controlMode == .voice else { return }
+        // A Voice-mode restart is a complete fresh read, not merely a visual
+        // scroll reset. Otherwise recognition would continue matching from the
+        // previous word and make the top-right button appear ineffective.
+        activeWordIndex = -1
+        predictedWordIndex = -1
+        lastScrolledWordIndex = -1
+        voice.stop()
+        voice.start(context: scriptWords)
+    }
+
     var body: some View {
         ZStack {
             model.promptBackground.opacity(model.opacity).ignoresSafeArea()
             GeometryReader { proxy in
                 ScrollViewReader { reader in
                     ScrollView(.vertical, showsIndicators: false) {
-                        Text(model.script.isEmpty ? "Paste a script in the editor." : model.script)
-                            .font(.system(size: model.fontSize, weight: .medium))
-                            .foregroundStyle(model.promptText)
-                            .multilineTextAlignment(.center)
-                            .lineSpacing(model.fontSize * (model.lineSpacing - 1))
+                        PromptWordFlow(
+                            words: scriptWords,
+                            confirmedWordIndex: activeWordIndex,
+                            predictedWordIndex: predictedWordIndex,
+                            textColor: model.promptText,
+                            fontSize: model.fontSize,
+                            lineSpacing: model.lineSpacing
+                        )
                             .padding(.horizontal, 56)
                             .padding(.vertical, proxy.size.height * 0.42)
                             .scaleEffect(x: model.mirrorText ? -1 : 1, y: 1)
-                            .offset(y: -offset)
-                            .id("script")
+                            // Normal mode retains its smooth continuous motion.
+                            // Voice mode uses the real matched word below.
+                            .offset(y: model.controlMode == .normal ? -offset : 0)
                     }
-                    // The script is moved by the prompter, not by incidental
-                    // trackpad gestures over the control dock.
-                    .scrollDisabled(true)
+                    // Keep the continuously-scrolling mode gesture-free, but
+                    // do not disable the voice ScrollView: doing so can also
+                    // suppress ScrollViewReader's programmatic movement on
+                    // macOS. Voice mode may additionally be repositioned by
+                    // the presenter between spoken passages.
+                    .scrollDisabled(model.controlMode == .normal)
+                    .onChange(of: displayWordIndex) { index in
+                        guard model.controlMode == .voice, index >= 0 else { return }
+                        // A predictive cue may disappear during a short pause.
+                        // Do not visibly pull the prompt backward in response.
+                        guard index >= lastScrolledWordIndex else { return }
+                        lastScrolledWordIndex = index
+                        // The word views are created by a wrapping Layout.
+                        // Waiting one run-loop lets that layout expose the
+                        // target ID before attempting to scroll to it.
+                        DispatchQueue.main.async {
+                            withAnimation(.easeOut(duration: 0.18)) {
+                                reader.scrollTo(index, anchor: .center)
+                            }
+                        }
+                    }
+                    .onChange(of: scrollResetToken) { _ in
+                        // Voice mode's ScrollView keeps its physical position
+                        // between runs. Reset it independently of the word
+                        // matcher so Restart visibly returns to the beginning.
+                        DispatchQueue.main.async {
+                            reader.scrollTo(0, anchor: .center)
+                        }
+                    }
                 }
             }
             .clipped()
@@ -518,11 +899,12 @@ struct PromptView: View {
                     Spacer()
                     VStack(spacing: 2) {
                         Text(model.controlMode.name.uppercased())
-                        Text(isPlaying ? "SCROLLING" : "PAUSED")
+                        Text(model.controlMode == .voice ? voice.status.uppercased() : (isPlaying ? "SCROLLING" : "PAUSED"))
                     }
                     .font(.caption.bold()).foregroundStyle(.white.opacity(0.9))
                     Spacer()
-                    Button { offset = 0 } label: { Image(systemName: "arrow.counterclockwise") }
+                    Button(action: restartPrompt) { Image(systemName: "arrow.counterclockwise") }
+                        .help("Restart from the beginning")
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.white.opacity(0.9))
@@ -535,7 +917,18 @@ struct PromptView: View {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 12) {
                                 PromptControlButton(title: "Slower", detail: "− speed", icon: "tortoise") { changeSpeed(forward: false) }
-                                PromptControlButton(title: isPlaying ? "Pause" : "Play", detail: playbackRateLabel, icon: isPlaying ? "pause.fill" : "play.fill", prominent: true) { isPlaying.toggle() }
+                                PromptControlButton(
+                                    title: model.controlMode == .voice ? (voice.isListening ? "Listening" : "Start voice") : (isPlaying ? "Pause" : "Play"),
+                                    detail: model.controlMode == .voice ? "live follow" : playbackRateLabel,
+                                    icon: model.controlMode == .voice ? "mic.fill" : (isPlaying ? "pause.fill" : "play.fill"),
+                                    prominent: true
+                                ) {
+                                    if model.controlMode == .voice {
+                                        voice.isListening ? voice.stop() : voice.start(context: scriptWords)
+                                    } else {
+                                        isPlaying.toggle()
+                                    }
+                                }
                                     .keyboardShortcut(.space, modifiers: [])
                                 PromptControlButton(title: "Faster", detail: "+ speed", icon: "hare") { changeSpeed(forward: true) }
                                 PromptControlButton(title: "Text", detail: "Aa", icon: "textformat") { showTextAppearance.toggle() }
@@ -551,9 +944,11 @@ struct PromptView: View {
                         }
                     }
                     .frame(height: 58)
-                    Text("Space: play or pause   •   Esc: close   •   Reading pace: \(playbackRateLabel)")
+                    Text(model.controlMode == .voice
+                         ? "\(voice.status)  •  Heard: \(voice.heardWords)"
+                         : "Space: play or pause   •   Esc: close   •   Reading pace: \(playbackRateLabel)")
                         .font(.caption)
-                        .foregroundStyle(.white.opacity(0.7))
+                        .foregroundStyle(model.controlMode == .voice && !voice.isListening ? .orange : .white.opacity(0.7))
                 }
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)
@@ -566,9 +961,153 @@ struct PromptView: View {
         .onReceive(timer) { now in
             let elapsed = now.timeIntervalSince(lastTick)
             lastTick = now
-            if isPlaying { offset += CGFloat(model.speed * elapsed) }
+            if isPlaying && model.controlMode == .normal { offset += CGFloat(model.speed * elapsed) }
+        }
+        .onReceive(voice.$newWords) { words in
+            guard model.controlMode == .voice else { return }
+            follow(spoken: words)
+            updatePredictiveCue()
+        }
+        .onChange(of: model.presentationSessionID) { _ in
+            isPlaying = false
+            activeWordIndex = -1
+            predictedWordIndex = -1
+            lastScrolledWordIndex = -1
+            scrollResetToken = UUID()
+            offset = 0
+            lastTick = Date()
+            showTextAppearance = false
+            voice.stop()
+            if model.controlMode == .voice { voice.start(context: scriptWords) }
+        }
+        .onChange(of: voice.isListening) { listening in
+            // Each deliberate voice session starts at the beginning, rather
+            // than inheriting a cue from a prior run.
+            if listening {
+                activeWordIndex = -1
+                predictedWordIndex = -1
+                lastScrolledWordIndex = -1
+            }
+        }
+        .onChange(of: voice.isSpeaking) { _ in
+            updatePredictiveCue()
+        }
+        .onAppear {
+            if model.controlMode == .voice {
+                activeWordIndex = -1
+                predictedWordIndex = -1
+                lastScrolledWordIndex = -1
+                voice.start(context: scriptWords)
+            }
+        }
+        .onChange(of: model.controlMode) { mode in
+            if mode == .voice {
+                activeWordIndex = -1
+                predictedWordIndex = -1
+                lastScrolledWordIndex = -1
+                voice.start(context: scriptWords)
+            } else {
+                voice.stop()
+                predictedWordIndex = -1
+            }
         }
         .onExitCommand { model.closePrompter() }
+    }
+}
+
+/// Places every script word as an individually addressable view. That is the
+/// key difference from a single concatenated Text: voice mode can scroll to
+/// the exact spoken word and reliably apply its orange underline.
+struct PromptWordFlow: View {
+    let words: [String]
+    let confirmedWordIndex: Int
+    let predictedWordIndex: Int
+    let textColor: Color
+    let fontSize: Double
+    let lineSpacing: Double
+
+    var body: some View {
+        FlowLayout(
+            horizontalSpacing: max(8, CGFloat(fontSize * 0.22)),
+            verticalSpacing: max(8, CGFloat(fontSize * lineSpacing - fontSize))
+        ) {
+            ForEach(Array(words.enumerated()), id: \.offset) { item in
+                let isConfirmed = item.offset == confirmedWordIndex
+                let isPredicted = !isConfirmed && item.offset == predictedWordIndex
+                Text(item.element)
+                    .font(.system(size: fontSize, weight: .medium))
+                    // Orange is the word confirmed by recognition. The softer
+                    // amber underline is an immediate one-word reading cue;
+                    // it disappears as soon as speech pauses.
+                    .foregroundStyle(isConfirmed ? Color.orange : (isPredicted ? Color.orange.opacity(0.65) : textColor))
+                    .underline(isConfirmed || isPredicted, color: isConfirmed ? .orange : .orange.opacity(0.55))
+                    .id(item.offset)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+}
+
+/// A compact wrapping layout for individually addressable script words.
+/// SwiftUI's Text concatenation cannot expose word-level scroll targets.
+struct FlowLayout: Layout {
+    var horizontalSpacing: CGFloat
+    var verticalSpacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .greatestFiniteMagnitude
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            let requiredWidth = x == 0 ? size.width : horizontalSpacing + size.width
+            if x > 0, x + requiredWidth > width {
+                x = 0
+                y += rowHeight + verticalSpacing
+                rowHeight = 0
+            }
+            x += size.width + (x > 0 ? horizontalSpacing : 0)
+            rowHeight = max(rowHeight, size.height)
+        }
+        return CGSize(width: proposal.width ?? x, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        // Assemble rows first so each line remains optically centered, matching
+        // the previous centred teleprompter text rather than becoming a left-
+        // aligned collection of individual word views.
+        var rows: [[Int]] = [[]]
+        var rowWidths: [CGFloat] = [0]
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            let spacing = rows[rows.count - 1].isEmpty ? 0 : horizontalSpacing
+            if !rows[rows.count - 1].isEmpty, rowWidths[rowWidths.count - 1] + spacing + size.width > bounds.width {
+                rows.append([index])
+                rowWidths.append(size.width)
+            } else {
+                rows[rows.count - 1].append(index)
+                rowWidths[rowWidths.count - 1] += spacing + size.width
+            }
+        }
+
+        var y = bounds.minY
+        for (rowIndex, row) in rows.enumerated() {
+            var x = bounds.midX - rowWidths[rowIndex] / 2
+            var rowHeight: CGFloat = 0
+            for index in row {
+                let subview = subviews[index]
+                let size = subview.sizeThatFits(.unspecified)
+                subview.place(
+                    at: CGPoint(x: x, y: y),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(width: size.width, height: size.height)
+                )
+                x += size.width + horizontalSpacing
+                rowHeight = max(rowHeight, size.height)
+            }
+            y += rowHeight + verticalSpacing
+        }
     }
 }
 
@@ -580,7 +1119,7 @@ struct PromptAppearanceInspector: View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Text size \(Int(model.fontSize)) pt").font(.caption.weight(.semibold))
-                SmoothSlider(value: $model.fontSize, range: 24...110)
+                SmoothSlider(value: $model.fontSize, range: 16...110)
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text("Line spacing \(String(format: "%.2f", model.lineSpacing))×").font(.caption.weight(.semibold))

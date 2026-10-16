@@ -14,7 +14,8 @@ swift run
 
 ```sh
 ./build-app.sh
-open .build/EchoPrompt.app
 ```
+
+Voice mode must be tested from the packaged `.app`, because macOS requires the app bundle's microphone and speech-recognition privacy declarations before it permits access.
 
 For a screen-recorded tutorial, configure your recording software to capture the target app/window (or only the target display), while leaving the EchoPrompt window outside the captured source. The app intentionally does not try to hide from arbitrary screen-recording software.
