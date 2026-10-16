@@ -140,12 +140,12 @@ final class VoiceScrollController: NSObject, ObservableObject {
         status = "Requesting speech permission…"
         switch SFSpeechRecognizer.authorizationStatus() {
         case .authorized:
-            requestMicrophoneAccess(context: context)
+            requestMicrophoneAccess(context: context, startWhenAuthorized: true)
         case .notDetermined:
             SFSpeechRecognizer.requestAuthorization { [weak self] authorization in
                 DispatchQueue.main.async {
                     guard authorization == .authorized else { self?.fail("Allow Speech Recognition to use Voice mode"); return }
-                    self?.requestMicrophoneAccess(context: context)
+                    self?.requestMicrophoneAccess(context: context, startWhenAuthorized: true)
                 }
             }
         case .denied, .restricted:
@@ -155,16 +155,62 @@ final class VoiceScrollController: NSObject, ObservableObject {
         }
     }
 
-    private func requestMicrophoneAccess(context: [String]) {
+    /// Requests protected resources while Script Studio is still visible.
+    /// This deliberately does not start audio capture; capture begins only
+    /// when the user starts the floating prompter.
+    func preparePermissions() {
+        guard !isListening, !isStarting else { return }
+        guard Bundle.main.object(forInfoDictionaryKey: "NSMicrophoneUsageDescription") != nil,
+              Bundle.main.object(forInfoDictionaryKey: "NSSpeechRecognitionUsageDescription") != nil else {
+            status = "Voice mode requires the packaged EchoPrompt.app"
+            return
+        }
+        isStarting = true
+        status = "Preparing Voice mode…"
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized:
+            requestMicrophoneAccess(context: [], startWhenAuthorized: false)
+        case .notDetermined:
+            SFSpeechRecognizer.requestAuthorization { [weak self] authorization in
+                DispatchQueue.main.async {
+                    guard authorization == .authorized else {
+                        self?.fail("Allow Speech Recognition to use Voice mode")
+                        return
+                    }
+                    self?.requestMicrophoneAccess(context: [], startWhenAuthorized: false)
+                }
+            }
+        case .denied, .restricted:
+            fail("Allow Speech Recognition in System Settings")
+        @unknown default:
+            fail("Speech Recognition permission is unavailable")
+        }
+    }
+
+    private func requestMicrophoneAccess(context: [String], startWhenAuthorized: Bool) {
+        func readyOrStart() {
+            if startWhenAuthorized {
+                beginSession(context: context)
+            } else {
+                isStarting = false
+                status = "Voice mode is ready"
+            }
+        }
         status = "Requesting microphone permission…"
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
-            beginSession(context: context)
+            readyOrStart()
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
                 DispatchQueue.main.async {
                     guard granted else { self?.fail("Allow Microphone access to use Voice mode"); return }
-                    self?.beginSession(context: context)
+                    guard let self else { return }
+                    if startWhenAuthorized {
+                        self.beginSession(context: context)
+                    } else {
+                        self.isStarting = false
+                        self.status = "Voice mode is ready"
+                    }
                 }
             }
         case .denied, .restricted:
@@ -538,7 +584,7 @@ struct EditorView: View {
                             Text("Audio-synced scrolling will be added next. Your selected file stays local to this Mac.")
                                 .font(.caption).foregroundStyle(.secondary)
                         } else if model.controlMode == .voice {
-                            Text("The prompt follows your live speech and pauses when you pause.")
+                            Text("Access is requested now while Script Studio stays visible. EchoPrompt listens only when you start presenting.")
                                 .font(.caption).foregroundStyle(.secondary)
                         } else {
                             Text("Automatic scrolling with on-screen controls.")
@@ -590,6 +636,9 @@ struct EditorView: View {
         .preferredColorScheme(model.studioAppearance.colorScheme)
         .onReceive(NotificationCenter.default.publisher(for: .restoreEchoPromptWorkspace)) { _ in
             model.restoreWorkspace()
+        }
+        .onChange(of: model.controlMode) { mode in
+            if mode == .voice { model.voiceScroll.preparePermissions() }
         }
     }
 }
