@@ -984,40 +984,75 @@ struct EditorView: View {
                         ControlLabel(title: "Scroll speed", value: model.speed, suffix: " px/s")
                         SmoothSlider(value: $model.speed, range: 5...100)
                     }
-                    EditorCard(title: "Control mode", icon: "hand.tap.fill") {
-                        Picker("Control mode", selection: $model.controlMode) {
+                    EditorCard(title: "Prompt behaviour", icon: "sparkles") {
+                        Text("Choose how EchoPrompt follows your script.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Picker("Follow mode", selection: $model.controlMode) {
                             Text("Normal").tag(PromptControlMode.normal)
                             Text("Voice").tag(PromptControlMode.voice)
                             Text("Audio").tag(PromptControlMode.recordedAudio)
                         }
                         .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .accessibilityLabel("Follow mode")
                         if model.controlMode == .recordedAudio {
-                            HStack {
-                                Button("Choose audio file…") { model.chooseAudioFile() }.buttonStyle(.bordered)
-                                Text(model.audioFileURL?.lastPathComponent ?? "No file selected")
-                                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            HStack(spacing: 10) {
+                                Image(systemName: "waveform")
+                                    .font(.title3)
+                                    .foregroundStyle(.tint)
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(model.audioFileURL?.lastPathComponent ?? "No recording selected")
+                                        .font(.subheadline.weight(.semibold))
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Text(model.audioFileURL == nil ? "Select a local recording to synchronize." : "Local audio source")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 4)
+                                Button(model.audioFileURL == nil ? "Choose…" : "Change…") {
+                                    model.chooseAudioFile()
+                                }
+                                .buttonStyle(.bordered)
                             }
-                            Text("EchoPrompt will transcribe this local file once, then follow its playback word by word.")
-                                .font(.caption).foregroundStyle(.secondary)
+                            .padding(10)
+                            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 11))
+                            .overlay(RoundedRectangle(cornerRadius: 11).stroke(Color.primary.opacity(0.08)))
+
+                            Label("EchoPrompt transcribes the recording once, then follows its playback word by word.", systemImage: "checkmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         } else if model.controlMode == .voice {
-                            Text("Access is requested now while Script Studio stays visible. EchoPrompt listens only when you start presenting.")
-                                .font(.caption).foregroundStyle(.secondary)
+                            Label("Voice access is requested here. EchoPrompt listens only after you start presenting.", systemImage: "lock.fill")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         } else {
-                            Text("Automatic scrolling with on-screen controls.")
-                                .font(.subheadline).foregroundStyle(.secondary)
+                            Label("Smooth automatic scrolling, with pace controls in the prompter.", systemImage: "arrow.up")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        Divider().padding(.top, 4)
-                        VStack(alignment: .leading, spacing: 5) {
-                            Toggle("Click through prompt", isOn: $model.clickThroughPresentation)
-                                .font(.subheadline)
-                            Text("Useful while working in VS Code. Return via Edit script or EchoPrompt ▸ Open Script Studio (⇧⌘E).")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        .padding(.top, 12)
                     }
                 }
 
                 HStack(alignment: .top, spacing: 14) {
+                    EditorCard(title: "Presentation", icon: "rectangle.inset.filled.and.cursorarrow") {
+                        Toggle(isOn: $model.clickThroughPresentation) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Click through prompt")
+                                    .font(.subheadline.weight(.semibold))
+                                Text("Let clicks pass to the app behind it while you read.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        Label("Return with Edit script or ⇧⌘E.", systemImage: "arrow.uturn.backward")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 2)
+                    }
                     EditorCard(title: "Appearance", icon: "paintpalette.fill") {
                         Picker("Prompt theme", selection: $model.promptTheme) {
                             ForEach(PromptTheme.allCases) { Text($0.name).tag($0) }
