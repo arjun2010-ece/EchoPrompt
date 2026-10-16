@@ -93,6 +93,46 @@ enum PromptControlMode: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Prompt placement
+
+enum PromptPlacement: String, CaseIterable, Identifiable {
+    case notch, corner, floating
+    var id: String { rawValue }
+    var name: String {
+        switch self {
+        case .notch: "Notch"
+        case .corner: "Corner"
+        case .floating: "Floating"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .notch: "laptopcomputer"
+        case .corner: "rectangle.inset.topright.filled"
+        case .floating: "macwindow"
+        }
+    }
+}
+
+enum PromptCorner: String, CaseIterable, Identifiable {
+    case topLeft, topRight, bottomLeft, bottomRight
+    var id: String { rawValue }
+    var name: String {
+        switch self {
+        case .topLeft: "Top left"
+        case .topRight: "Top right"
+        case .bottomLeft: "Bottom left"
+        case .bottomRight: "Bottom right"
+        }
+    }
+    var isTop: Bool { self == .topLeft || self == .topRight }
+    var isLeft: Bool { self == .topLeft || self == .bottomLeft }
+}
+
+/// How PromptView arranges itself. Derived from the placement and panel size;
+/// never persisted.
+enum PromptLayoutStyle { case full, compact, notch }
+
 /// A presentation-agnostic representation of word-level progress. Both live
 /// Voice control and future recorded-audio synchronization can supply this to
 /// the renderer without duplicating its visual state rules.
@@ -788,10 +828,73 @@ final class PrompterModel: ObservableObject {
     @Published var studioAppearance: StudioAppearance = .dark
     @Published private(set) var history: [SavedScript] = []
 
-    private var panel: NSPanel?
+    // MARK: Capture visibility & placement settings
+
+    /// Best-effort: the capturing app decides whether it honours
+    /// `sharingType = .none` (ScreenCaptureKit is inconsistent about it).
+    @Published var hideFromScreenCapture = true {
+        didSet {
+            UserDefaults.standard.set(hideFromScreenCapture, forKey: DefaultsKey.hideFromCapture)
+            applyCaptureVisibility()
+        }
+    }
+    @Published var placement: PromptPlacement = .floating {
+        didSet {
+            UserDefaults.standard.set(placement.rawValue, forKey: DefaultsKey.placement)
+            placementSettingsChanged()
+        }
+    }
+    @Published var corner: PromptCorner = .topRight {
+        didSet {
+            UserDefaults.standard.set(corner.rawValue, forKey: DefaultsKey.corner)
+            placementSettingsChanged()
+        }
+    }
+    @Published var cornerSize = CGSize(width: 420, height: 240) {
+        didSet { Self.store(cornerSize, forKey: DefaultsKey.cornerSize) }
+    }
+    /// Width of the notch panel and height of its body below the notch.
+    @Published var notchSize = CGSize(width: 560, height: 150) {
+        didSet { Self.store(notchSize, forKey: DefaultsKey.notchSize) }
+    }
+    /// `nil` means "the display Script Studio is on".
+    @Published var targetDisplayID: String? {
+        didSet {
+            UserDefaults.standard.set(targetDisplayID, forKey: DefaultsKey.targetDisplay)
+            placementSettingsChanged()
+        }
+    }
+    @Published var notchTipDismissed = false {
+        didSet { UserDefaults.standard.set(notchTipDismissed, forKey: DefaultsKey.notchTipDismissed) }
+    }
+    /// Height of the hardware notch on the prompt's display; 0 when the
+    /// notch placement falls back to top-center docking.
+    @Published private(set) var notchTopInset: CGFloat = 0
+
+    private var panel: PromptPanel?
+    private let panelDelegate = PromptPanelDelegate()
     private weak var workspaceWindow: NSWindow?
     private let historyKey = "EchoPrompt.scriptHistory.v1"
     private var activeHistoryID: UUID?
+    /// Floating frames per display, stored relative to that display's origin.
+    private var floatingFrames: [String: NSRect] = [:]
+    private var studioScreenKey: String?
+    private var isApplyingPlacement = false
+    private var suppressAutoApply = false
+    private var pendingPanelWork: DispatchWorkItem?
+    private var notchResizeStart: (height: CGFloat, mouseY: CGFloat)?
+
+    private enum DefaultsKey {
+        static let hideFromCapture = "EchoPrompt.hideFromCapture.v1"
+        static let placement = "EchoPrompt.placement.v1"
+        static let corner = "EchoPrompt.corner.v1"
+        static let cornerSize = "EchoPrompt.cornerSize.v1"
+        static let notchSize = "EchoPrompt.notchSize.v1"
+        static let floatingFrames = "EchoPrompt.floatingFrames.v1"
+        static let targetDisplay = "EchoPrompt.targetDisplay.v1"
+        static let notchTipDismissed = "EchoPrompt.notchTipDismissed.v1"
+        static let clickThroughHintShown = "EchoPrompt.clickThroughHintShown.v1"
+    }
 
     var promptBackground: Color { promptTheme.background }
     var promptText: Color { promptTheme.text }
@@ -826,6 +929,27 @@ final class PrompterModel: ObservableObject {
 
     init() {
         if let data = UserDefaults.standard.data(forKey: historyKey), let items = try? JSONDecoder().decode([SavedScript].self, from: data) { history = items }
+
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: DefaultsKey.hideFromCapture) != nil {
+            hideFromScreenCapture = defaults.bool(forKey: DefaultsKey.hideFromCapture)
+        }
+        if let raw = defaults.string(forKey: DefaultsKey.placement), let value = PromptPlacement(rawValue: raw) { placement = value }
+        if let raw = defaults.string(forKey: DefaultsKey.corner), let value = PromptCorner(rawValue: raw) { corner = value }
+        if let size = Self.loadSize(forKey: DefaultsKey.cornerSize) { cornerSize = size }
+        if let size = Self.loadSize(forKey: DefaultsKey.notchSize) { notchSize = size }
+        targetDisplayID = defaults.string(forKey: DefaultsKey.targetDisplay)
+        notchTipDismissed = defaults.bool(forKey: DefaultsKey.notchTipDismissed)
+        if let stored = defaults.dictionary(forKey: DefaultsKey.floatingFrames) as? [String: String] {
+            floatingFrames = stored.mapValues { NSRectFromString($0) }
+        }
+
+        _ = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            DispatchQueue.main.async { self?.screensDidChange() }
+        }
+        _ = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            DispatchQueue.main.async { self?.activeSpaceDidChange() }
+        }
     }
 
     func saveHistoryNow() {
@@ -891,44 +1015,402 @@ final class PrompterModel: ObservableObject {
         recordedAudio.stop()
         presentationSessionID = UUID()
         workspaceWindow = NSApp.keyWindow
+        // Script Studio's display is the default prompt display.
+        studioScreenKey = workspaceWindow?.screen.map(Self.displayKey(for:))
         workspaceWindow?.orderOut(nil)
-        if let panel { panel.ignoresMouseEvents = clickThroughPresentation; panel.makeKeyAndOrderFront(nil); return }
-        let promptSize = NSSize(width: 900, height: 360)
-        // AppKit's coordinate system starts at the bottom. Position the panel
-        // 40 points below the usable top edge, near a laptop's camera line.
-        let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let origin = NSPoint(
-            x: screen.midX - promptSize.width / 2,
-            y: screen.maxY - promptSize.height - 40
-        )
-        let panel = NSPanel(
-            contentRect: NSRect(origin: origin, size: promptSize),
-            styleMask: [.titled, .closable, .resizable, .utilityWindow],
-            backing: .buffered,
-            defer: false
-        )
-        panel.title = "EchoPrompt"
-        panel.level = .floating
-        panel.isReleasedWhenClosed = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.isMovableByWindowBackground = true
+        let panel = self.panel ?? makePanel()
+        // Set before ordering front: some capture tools snapshot the window
+        // list when a stream starts.
+        applyCaptureVisibility()
+        applyPlacement(animated: false)
         panel.ignoresMouseEvents = clickThroughPresentation
-        panel.contentView = NSHostingView(rootView: PromptView(model: self))
         panel.makeKeyAndOrderFront(nil)
-        self.panel = panel
     }
 
     func closePrompter() {
         voiceScroll.stop()
         recordedAudio.stop()
+        pendingPanelWork?.cancel()
+        notchResizeStart = nil
         panel?.orderOut(nil)
         restoreWorkspace()
+    }
+
+    /// The panel is created once and only ever reconfigured, so PromptView's
+    /// reading state survives placement changes.
+    private func makePanel() -> PromptPanel {
+        let panel = PromptPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 360),
+            styleMask: [.borderless, .nonactivatingPanel, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = "EchoPrompt"
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        panelDelegate.model = self
+        panel.delegate = panelDelegate
+        let hostingView = NSHostingView(rootView: PromptView(model: self))
+        // The model owns the frame; SwiftUI content must not resize the panel.
+        hostingView.sizingOptions = []
+        panel.contentView = hostingView
+        self.panel = panel
+        return panel
+    }
+
+    // MARK: Capture visibility
+
+    var captureSharingType: NSWindow.SharingType { hideFromScreenCapture ? .none : .readOnly }
+
+    func applyCaptureVisibility() {
+        panel?.sharingType = captureSharingType
+    }
+
+    var shouldShowClickThroughHint: Bool {
+        clickThroughPresentation && placement != .floating
+            && !UserDefaults.standard.bool(forKey: DefaultsKey.clickThroughHintShown)
+    }
+
+    func markClickThroughHintShown() {
+        UserDefaults.standard.set(true, forKey: DefaultsKey.clickThroughHintShown)
+    }
+
+    /// Notch placement is always black; theme text without contrast on black
+    /// (Paper's black text) falls back to white.
+    var notchTextColor: Color { promptTheme == .paper ? .white : promptTheme.text }
+
+    // MARK: Displays
+
+    static func displayKey(for screen: NSScreen) -> String {
+        let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+        return "\(number?.uint32Value ?? 0)|\(screen.localizedName)"
+    }
+
+    /// Display IDs can change after a reboot or dock reconnect, so fall back
+    /// to the display name.
+    private func screen(forKey key: String?) -> NSScreen? {
+        guard let key else { return nil }
+        let screens = NSScreen.screens
+        if let exact = screens.first(where: { Self.displayKey(for: $0) == key }) { return exact }
+        let parts = key.split(separator: "|", maxSplits: 1).map(String.init)
+        if let id = parts.first, let byID = screens.first(where: { Self.displayKey(for: $0).hasPrefix(id + "|") }) { return byID }
+        if parts.count == 2 { return screens.first { $0.localizedName == parts[1] } }
+        return nil
+    }
+
+    var availableDisplays: [(key: String, name: String)] {
+        NSScreen.screens.map { (Self.displayKey(for: $0), $0.localizedName) }
+    }
+
+    func isDisplayConnected(_ key: String) -> Bool { screen(forKey: key) != nil }
+
+    private func presentationScreen() -> NSScreen? {
+        screen(forKey: targetDisplayID) ?? screen(forKey: studioScreenKey) ?? NSScreen.main ?? NSScreen.screens.first
+    }
+
+    /// The display Studio describes before a presentation starts.
+    private var previewScreen: NSScreen? {
+        screen(forKey: targetDisplayID)
+            ?? NSApp.windows.first(where: { !($0 is NSPanel) && $0.isVisible })?.screen
+            ?? NSScreen.main
+    }
+
+    var previewScreenHasNotch: Bool { (previewScreen?.safeAreaInsets.top ?? 0) > 0 }
+    var anyScreenHasNotch: Bool { NSScreen.screens.contains { $0.safeAreaInsets.top > 0 } }
+
+    private func screensDidChange() {
+        // Refresh Studio's display picker and notch caption.
+        objectWillChange.send()
+        guard panel?.isVisible == true else { return }
+        applyPlacement(animated: false)
+    }
+
+    private func activeSpaceDidChange() {
+        guard let panel, panel.isVisible, placement == .notch else { return }
+        applyPlacement(animated: false)
+        panel.orderFrontRegardless()
+    }
+
+    // MARK: Placement geometry
+
+    private static func hardwareNotchWidth(on screen: NSScreen) -> CGFloat? {
+        guard screen.safeAreaInsets.top > 0,
+              let left = screen.auxiliaryTopLeftArea,
+              let right = screen.auxiliaryTopRightArea else { return nil }
+        return max(0, screen.frame.width - left.width - right.width)
+    }
+
+    private func notchFrame(on screen: NSScreen) -> NSRect {
+        let inset = screen.safeAreaInsets.top
+        let hardwareWidth = Self.hardwareNotchWidth(on: screen) ?? 0
+        let width = min(screen.frame.width, max(notchSize.width, hardwareWidth + 2 * 60))
+        let height = inset + notchSize.height
+        // Without a notch, dock under the menu bar instead of the physical top.
+        let top = inset > 0 ? screen.frame.maxY : screen.visibleFrame.maxY
+        return NSRect(x: screen.frame.midX - width / 2, y: top - height, width: width, height: height)
+    }
+
+    private func clampedCornerSize(on screen: NSScreen) -> CGSize {
+        let visible = screen.visibleFrame
+        return CGSize(
+            width: min(max(cornerSize.width, 300), visible.width * 0.6),
+            height: min(max(cornerSize.height, 160), visible.height * 0.6)
+        )
+    }
+
+    private func cornerFrame(on screen: NSScreen) -> NSRect {
+        let visible = screen.visibleFrame
+        let size = clampedCornerSize(on: screen)
+        let margin: CGFloat = 16
+        return NSRect(
+            x: corner.isLeft ? visible.minX + margin : visible.maxX - margin - size.width,
+            y: corner.isTop ? visible.maxY - margin - size.height : visible.minY + margin,
+            width: size.width,
+            height: size.height
+        )
+    }
+
+    private func floatingFrame(on screen: NSScreen) -> NSRect {
+        let visible = screen.visibleFrame
+        var frame: NSRect
+        if let saved = floatingFrames[Self.displayKey(for: screen)] {
+            frame = saved.offsetBy(dx: screen.frame.minX, dy: screen.frame.minY)
+        } else {
+            // AppKit's coordinate system starts at the bottom. Position the
+            // panel 40 points below the usable top edge, near the camera line.
+            let size = NSSize(width: 900, height: 360)
+            frame = NSRect(x: visible.midX - size.width / 2, y: visible.maxY - size.height - 40, width: size.width, height: size.height)
+        }
+        // Keep at least 80 × 40 points reachable after display changes.
+        frame.size.width = min(frame.width, visible.width)
+        frame.size.height = min(frame.height, visible.height)
+        frame.origin.x = min(max(frame.minX, visible.minX - frame.width + 80), visible.maxX - 80)
+        frame.origin.y = min(max(frame.minY, visible.minY - frame.height + 40), visible.maxY - frame.height)
+        return frame
+    }
+
+    // MARK: Applying placement
+
+    func applyPlacement(animated: Bool) {
+        guard let panel, let screen = presentationScreen() else { return }
+        let frame: NSRect
+        switch placement {
+        case .notch:
+            notchTopInset = screen.safeAreaInsets.top
+            frame = notchFrame(on: screen)
+            panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)) + 1)
+            panel.allowsMenuBarOverlap = true
+            panel.isMovableByWindowBackground = false
+            panel.hasShadow = false
+            // Only the bottom handle resizes the notch body.
+            panel.minSize = frame.size
+            panel.maxSize = frame.size
+        case .corner:
+            notchTopInset = 0
+            frame = cornerFrame(on: screen)
+            panel.level = .floating
+            panel.allowsMenuBarOverlap = false
+            panel.isMovableByWindowBackground = true
+            panel.hasShadow = true
+            panel.minSize = NSSize(width: 300, height: 160)
+            panel.maxSize = NSSize(width: screen.visibleFrame.width * 0.6, height: screen.visibleFrame.height * 0.6)
+        case .floating:
+            notchTopInset = 0
+            frame = floatingFrame(on: screen)
+            panel.level = .floating
+            panel.allowsMenuBarOverlap = false
+            panel.isMovableByWindowBackground = true
+            panel.hasShadow = true
+            panel.minSize = NSSize(width: 360, height: 200)
+            panel.maxSize = NSSize(width: 10_000, height: 10_000)
+        }
+        setPanelFrame(frame, animated: animated)
+    }
+
+    private func setPanelFrame(_ frame: NSRect, animated: Bool) {
+        guard let panel else { return }
+        // Programmatic moves must not be mistaken for presenter drags.
+        isApplyingPlacement = true
+        if animated && panel.isVisible {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.2
+                panel.animator().setFrame(frame, display: true)
+            } completionHandler: { [weak self] in
+                DispatchQueue.main.async {
+                    self?.isApplyingPlacement = false
+                    self?.panel?.invalidateShadow()
+                }
+            }
+        } else {
+            panel.setFrame(frame, display: true)
+            panel.invalidateShadow()
+            isApplyingPlacement = false
+        }
+    }
+
+    private func placementSettingsChanged() {
+        guard !suppressAutoApply, panel?.isVisible == true else { return }
+        applyPlacement(animated: true)
+    }
+
+    func setNotchWidth(_ width: CGFloat) {
+        notchSize.width = width
+        placementSettingsChanged()
+    }
+
+    /// Driven by the notch body's bottom handle. Uses the global mouse
+    /// position because the handle moves while the panel grows.
+    func updateNotchHeightDrag() {
+        let mouseY = NSEvent.mouseLocation.y
+        if notchResizeStart == nil { notchResizeStart = (notchSize.height, mouseY) }
+        guard let start = notchResizeStart, let panel, let screen = presentationScreen() else { return }
+        notchSize.height = min(max(start.height + (start.mouseY - mouseY), 80), 400)
+        let frame = notchFrame(on: screen)
+        panel.minSize = frame.size
+        panel.maxSize = frame.size
+        setPanelFrame(frame, animated: false)
+    }
+
+    func endNotchHeightDrag() { notchResizeStart = nil }
+
+    // MARK: Presenter moves & resizes
+
+    func panelDidMove() {
+        guard !isApplyingPlacement, let panel, panel.isVisible else { return }
+        switch placement {
+        case .floating: schedulePanelWork(after: 0.3) { [weak self] in self?.saveFloatingFrame() }
+        case .corner: schedulePanelWork(after: 0.15) { [weak self] in self?.snapToNearestCorner() }
+        case .notch: break
+        }
+    }
+
+    func panelDidEndLiveResize() {
+        guard !isApplyingPlacement, let panel, panel.isVisible else { return }
+        switch placement {
+        case .floating: saveFloatingFrame()
+        case .corner:
+            cornerSize = panel.frame.size
+            snapToNearestCorner()
+        case .notch: break
+        }
+    }
+
+    private func schedulePanelWork(after delay: TimeInterval, _ work: @escaping () -> Void) {
+        pendingPanelWork?.cancel()
+        let item = DispatchWorkItem(block: work)
+        pendingPanelWork = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    private func saveFloatingFrame() {
+        guard placement == .floating, let panel, let screen = panel.screen else { return }
+        floatingFrames[Self.displayKey(for: screen)] = panel.frame.offsetBy(dx: -screen.frame.minX, dy: -screen.frame.minY)
+        UserDefaults.standard.set(floatingFrames.mapValues { NSStringFromRect($0) }, forKey: DefaultsKey.floatingFrames)
+    }
+
+    private func snapToNearestCorner() {
+        // Snap only once the presenter has released the mouse.
+        guard NSEvent.pressedMouseButtons == 0 else {
+            schedulePanelWork(after: 0.15) { [weak self] in self?.snapToNearestCorner() }
+            return
+        }
+        guard placement == .corner, let panel, panel.isVisible,
+              let screen = panel.screen ?? presentationScreen() else { return }
+        let visible = screen.visibleFrame
+        let isLeft = panel.frame.midX < visible.midX
+        let isTop = panel.frame.midY > visible.midY
+        suppressAutoApply = true
+        corner = isTop ? (isLeft ? .topLeft : .topRight) : (isLeft ? .bottomLeft : .bottomRight)
+        let key = Self.displayKey(for: screen)
+        if presentationScreen().map(Self.displayKey(for:)) != key { targetDisplayID = key }
+        suppressAutoApply = false
+        applyPlacement(animated: true)
+    }
+
+    private static func loadSize(forKey key: String) -> CGSize? {
+        guard let values = UserDefaults.standard.array(forKey: key) as? [Double], values.count == 2 else { return nil }
+        return CGSize(width: values[0], height: values[1])
+    }
+
+    private static func store(_ size: CGSize, forKey key: String) {
+        UserDefaults.standard.set([Double(size.width), Double(size.height)], forKey: key)
     }
 
     func restoreWorkspace() {
         clickThroughPresentation = false
         workspaceWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+// MARK: - Prompt panel
+
+/// The borderless, non-activating window that hosts PromptView in every
+/// placement. Clicking it during a call does not bring Script Studio forward.
+final class PromptPanel: NSPanel {
+    /// Notch placement sits over the menu bar, which AppKit otherwise prevents.
+    var allowsMenuBarOverlap = false
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        allowsMenuBarOverlap ? frameRect : super.constrainFrameRect(frameRect, to: screen)
+    }
+}
+
+final class PromptPanelDelegate: NSObject, NSWindowDelegate {
+    weak var model: PrompterModel?
+    func windowDidMove(_ notification: Notification) { model?.panelDidMove() }
+    func windowDidEndLiveResize(_ notification: Notification) { model?.panelDidEndLiveResize() }
+    func windowDidChangeScreen(_ notification: Notification) { model?.applyCaptureVisibility() }
+}
+
+/// Popovers create their own windows, which do not inherit the prompt panel's
+/// sharingType. Attach this to their content to hide them from capture too.
+struct CaptureVisibilityProbe: NSViewRepresentable {
+    let hidesFromCapture: Bool
+
+    func makeNSView(context: Context) -> ProbeView {
+        let view = ProbeView()
+        view.hidesFromCapture = hidesFromCapture
+        return view
+    }
+
+    func updateNSView(_ view: ProbeView, context: Context) { view.hidesFromCapture = hidesFromCapture }
+
+    final class ProbeView: NSView {
+        var hidesFromCapture = true { didSet { apply() } }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            apply()
+        }
+        private func apply() { window?.sharingType = hidesFromCapture ? .none : .readOnly }
+    }
+}
+
+/// Square top edge with a slight outward flare and rounded bottom corners, so
+/// the prompt reads as one surface with the hardware notch.
+struct NotchShape: Shape {
+    static let flare: CGFloat = 8
+    var bottomRadius: CGFloat = 18
+
+    func path(in rect: CGRect) -> Path {
+        let f = Self.flare
+        let r = min(bottomRadius, rect.height / 2)
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX - f, y: rect.minY + f), control: CGPoint(x: rect.maxX - f, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - f, y: rect.maxY - r))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX - f - r, y: rect.maxY), control: CGPoint(x: rect.maxX - f, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + f + r, y: rect.maxY))
+        path.addQuadCurve(to: CGPoint(x: rect.minX + f, y: rect.maxY - r), control: CGPoint(x: rect.minX + f, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + f, y: rect.minY + f))
+        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.minY), control: CGPoint(x: rect.minX + f, y: rect.minY))
+        path.closeSubpath()
+        return path
     }
 }
 
@@ -1038,6 +1520,34 @@ struct EditorView: View {
 
                 HStack(alignment: .top, spacing: 14) {
                     EditorCard(title: "Presentation", icon: "rectangle.inset.filled.and.cursorarrow") {
+                        Picker("Placement", selection: $model.placement) {
+                            ForEach(PromptPlacement.allCases) { Label($0.name, systemImage: $0.icon).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        placementDetail
+                        if model.availableDisplays.count > 1 {
+                            Picker("Display", selection: $model.targetDisplayID) {
+                                Text("Same as Script Studio").tag(String?.none)
+                                ForEach(model.availableDisplays, id: \.key) { display in
+                                    Text(display.name).tag(Optional(display.key))
+                                }
+                                if let key = model.targetDisplayID, !model.isDisplayConnected(key) {
+                                    Text("\(key.split(separator: "|", maxSplits: 1).last.map(String.init) ?? "Display") (disconnected)")
+                                        .tag(Optional(key))
+                                }
+                            }
+                        }
+                        Toggle(isOn: $model.hideFromScreenCapture) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Hide from screen sharing")
+                                    .font(.subheadline.weight(.semibold))
+                                Text("Viewers and recordings won't see the prompter in most apps.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
                         Toggle(isOn: $model.clickThroughPresentation) {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Click through prompt")
@@ -1067,13 +1577,30 @@ struct EditorView: View {
 
                 HStack(spacing: 8) {
                     Image(systemName: "command").foregroundStyle(.secondary)
-                    Text("Press ⌘↩ to start EchoPrompt in a focused floating window.")
+                    Text("Press ⌘↩ to start EchoPrompt in your chosen placement.")
                 }.font(.subheadline).foregroundStyle(.secondary)
+
+                if model.anyScreenHasNotch && model.placement != .notch && !model.notchTipDismissed {
+                    HStack(alignment: .center, spacing: 10) {
+                        Image(systemName: "laptopcomputer").foregroundStyle(.tint)
+                        Text("Try Notch placement: read right under your camera.")
+                            .font(.subheadline)
+                        Spacer()
+                        Button("Use Notch") {
+                            model.placement = .notch
+                            model.notchTipDismissed = true
+                        }
+                        Button { model.notchTipDismissed = true } label: { Image(systemName: "xmark") }.buttonStyle(.plain).accessibilityLabel("Dismiss notch tip")
+                    }
+                    .padding(12).background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 11))
+                }
 
                 if model.showRecordingTip {
                     HStack(alignment: .center, spacing: 10) {
                         Image(systemName: "video.badge.checkmark").foregroundStyle(.tint)
-                        Text("For recordings, capture your browser or app window—not the floating prompter.")
+                        Text(model.hideFromScreenCapture
+                             ? "EchoPrompt is hidden from screen sharing. Do a 10-second test recording in your meeting app before going live."
+                             : "For recordings, capture your browser or app window—not the floating prompter.")
                             .font(.subheadline)
                         Spacer()
                         Button { model.showRecordingTip = false } label: { Image(systemName: "xmark") }.buttonStyle(.plain).accessibilityLabel("Dismiss recording tip")
@@ -1095,6 +1622,59 @@ struct EditorView: View {
                 model.recordedAudio.preparePermissions()
             }
         }
+    }
+
+    @ViewBuilder private var placementDetail: some View {
+        switch model.placement {
+        case .notch:
+            Label(
+                model.previewScreenHasNotch
+                    ? "Sits under the camera notch."
+                    : "No notch on this display. Will dock at top center.",
+                systemImage: "camera"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            if !model.clickThroughPresentation {
+                Label("Covers part of the menu bar while presenting.", systemImage: "menubar.rectangle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .corner:
+            HStack(spacing: 10) {
+                CornerPicker(selection: $model.corner)
+                Text(model.corner.name).font(.caption).foregroundStyle(.secondary)
+            }
+        case .floating:
+            Label("Move and resize it anywhere. Its position is remembered per display.", systemImage: "arrow.up.and.down.and.arrow.left.and.right")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// A 2×2 miniature screen for choosing the prompter corner.
+struct CornerPicker: View {
+    @Binding var selection: PromptCorner
+
+    var body: some View {
+        Grid(horizontalSpacing: 4, verticalSpacing: 4) {
+            GridRow { cell(.topLeft); cell(.topRight) }
+            GridRow { cell(.bottomLeft); cell(.bottomRight) }
+        }
+        .padding(4)
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.18)))
+    }
+
+    private func cell(_ corner: PromptCorner) -> some View {
+        Button { selection = corner } label: {
+            RoundedRectangle(cornerRadius: 3)
+                .fill(selection == corner ? Color.accentColor : Color.primary.opacity(0.10))
+                .frame(width: 30, height: 18)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(corner.name)
+        .help(corner.name)
     }
 }
 
@@ -1202,6 +1782,10 @@ struct PromptView: View {
     @State private var scrollResetToken = UUID()
     @State private var offset: CGFloat = 0
     @State private var lastTick = Date()
+    @State private var hoverBarVisible = false
+    /// Invalidates pending hide-after-delay work when the pointer re-enters.
+    @State private var hoverToken = UUID()
+    @State private var showClickThroughHint = false
     private let timer = Timer.publish(every: 1.0 / 60.0, on: .main, in: .common).autoconnect()
     private let baseSpeed: Double = 24
     private let speedSteps: [Double] = [0.75, 0.85, 1.0, 1.15, 1.25, 1.5, 1.75, 2.0]
@@ -1264,6 +1848,59 @@ struct PromptView: View {
         case .voice: return "\(voice.status)  •  Heard: \(voice.heardWords)"
         case .recordedAudio: return "\(recordedAudio.status)  •  Esc: close"
         case .normal: return "Space: play or pause   •   Esc: close   •   Reading pace: \(playbackRateLabel)"
+        }
+    }
+
+    private var needsAttention: Bool {
+        (model.controlMode == .voice && !voice.isListening)
+            || (model.controlMode == .recordedAudio && !recordedAudio.isReady)
+    }
+    private var compactStatus: String {
+        switch model.controlMode {
+        case .voice: return "\(voice.status)  •  Heard: \(voice.heardWords)"
+        case .recordedAudio: return recordedAudio.status
+        case .normal: return "\(isPlaying ? "Scrolling" : "Paused")  •  \(playbackRateLabel)"
+        }
+    }
+    private var primaryActionDisabled: Bool { model.controlMode == .recordedAudio && !recordedAudio.isReady }
+
+    private func primaryAction() {
+        if model.controlMode == .voice {
+            voice.isListening ? voice.stop() : voice.start(context: scriptWords)
+        } else if model.controlMode == .recordedAudio {
+            recordedAudio.togglePlayback()
+        } else {
+            isPlaying.toggle()
+        }
+    }
+
+    private func layoutStyle(for size: CGSize) -> PromptLayoutStyle {
+        switch model.placement {
+        case .notch: return .notch
+        case .corner: return .compact
+        case .floating: return size.width < 560 || size.height < 260 ? .compact : .full
+        }
+    }
+
+    private func hoverChanged(_ inside: Bool) {
+        hoverToken = UUID()
+        if inside {
+            withAnimation(.easeOut(duration: 0.15)) { hoverBarVisible = true }
+            return
+        }
+        let token = hoverToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            guard token == hoverToken, !showTextAppearance else { return }
+            withAnimation(.easeOut(duration: 0.15)) { hoverBarVisible = false }
+        }
+    }
+
+    private func presentClickThroughHintIfNeeded() {
+        guard model.shouldShowClickThroughHint else { return }
+        model.markClickThroughHintShown()
+        withAnimation { showClickThroughHint = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            withAnimation { showClickThroughHint = false }
         }
     }
 
@@ -1396,146 +2033,19 @@ struct PromptView: View {
     }
 
     var body: some View {
-        ZStack {
-            model.promptBackground.opacity(model.opacity).ignoresSafeArea()
-            GeometryReader { proxy in
-                ScrollViewReader { reader in
-                    ScrollView(.vertical, showsIndicators: false) {
-                        PromptWordFlow(
-                            words: scriptWords,
-                            progress: readingProgress,
-                            textColor: model.promptText,
-                            fontSize: model.fontSize,
-                            lineSpacing: model.lineSpacing
-                        )
-                            .padding(.horizontal, 56)
-                            .padding(.vertical, proxy.size.height * 0.42)
-                            .scaleEffect(x: model.mirrorText ? -1 : 1, y: 1)
-                            // Normal mode retains its smooth continuous motion.
-                            // Voice mode uses the real matched word below.
-                            .offset(y: model.controlMode == .normal ? -offset : 0)
-                    }
-                    // Keep the continuously-scrolling mode gesture-free, but
-                    // do not disable the voice ScrollView: doing so can also
-                    // suppress ScrollViewReader's programmatic movement on
-                    // macOS. Voice mode may additionally be repositioned by
-                    // the presenter between spoken passages.
-                    .scrollDisabled(model.controlMode == .normal)
-                    .onChange(of: displayWordIndex) { index in
-                        guard model.controlMode != .normal, index >= 0 else { return }
-                        // A predictive cue may disappear during a short pause.
-                        // Do not visibly pull the prompt backward in response.
-                        guard index >= lastScrolledWordIndex else { return }
-                        lastScrolledWordIndex = index
-                        // The word views are created by a wrapping Layout.
-                        // Waiting one run-loop lets that layout expose the
-                        // target ID before attempting to scroll to it.
-                        DispatchQueue.main.async {
-                            withAnimation(.easeOut(duration: 0.18)) {
-                                reader.scrollTo(index, anchor: .center)
-                            }
-                        }
-                    }
-                    .onChange(of: scrollResetToken) { _ in
-                        // Voice mode's ScrollView keeps its physical position
-                        // between runs. Reset it independently of the word
-                        // matcher so Restart visibly returns to the beginning.
-                        DispatchQueue.main.async {
-                            reader.scrollTo(0, anchor: .center)
-                        }
-                    }
+        GeometryReader { proxy in
+            Group {
+                switch layoutStyle(for: proxy.size) {
+                case .full: fullLayout
+                case .compact: compactLayout
+                case .notch: notchLayout
                 }
             }
-            .clipped()
-
-            VStack(spacing: 0) {
-                HStack {
-                    Button { model.closePrompter() } label: {
-                        Label("Edit script", systemImage: "pencil")
-                            .font(.subheadline.weight(.semibold))
-                    }
-                    .help("Return to the EchoPrompt Script Studio")
-                    Spacer()
-                    VStack(spacing: 2) {
-                        Text(model.controlMode.name.uppercased())
-                        Text(
-                            model.controlMode == .voice ? voice.status.uppercased()
-                                : (model.controlMode == .recordedAudio ? recordedAudio.status.uppercased()
-                                    : (isPlaying ? "SCROLLING" : "PAUSED"))
-                        )
-                    }
-                    .font(.caption.bold()).foregroundStyle(.white.opacity(0.9))
-                    Spacer()
-                    Button(action: restartPrompt) { Image(systemName: "arrow.counterclockwise") }
-                        .help("Restart from the beginning")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(0.9))
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(Color.black.opacity(0.96))
-                Spacer()
-                VStack(spacing: 10) {
-                    GeometryReader { proxy in
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 12) {
-                                PromptControlButton(
-                                    title: "Slower",
-                                    detail: model.controlMode == .voice ? "voice paced" : (model.controlMode == .recordedAudio ? "audio paced" : "− speed"),
-                                    icon: "tortoise",
-                                    isDisabled: model.controlMode != .normal
-                                ) { changeSpeed(forward: false) }
-                                PromptControlButton(
-                                    title: controlButtonTitle,
-                                    detail: controlButtonDetail,
-                                    icon: controlButtonIcon,
-                                    prominent: true,
-                                    isDisabled: model.controlMode == .recordedAudio && !recordedAudio.isReady
-                                ) {
-                                    if model.controlMode == .voice {
-                                        voice.isListening ? voice.stop() : voice.start(context: scriptWords)
-                                    } else if model.controlMode == .recordedAudio {
-                                        recordedAudio.togglePlayback()
-                                    } else {
-                                        isPlaying.toggle()
-                                    }
-                                }
-                                    .keyboardShortcut(.space, modifiers: [])
-                                PromptControlButton(
-                                    title: "Faster",
-                                    detail: model.controlMode == .voice ? "voice paced" : (model.controlMode == .recordedAudio ? "audio paced" : "+ speed"),
-                                    icon: "hare",
-                                    isDisabled: model.controlMode != .normal
-                                ) { changeSpeed(forward: true) }
-                                PromptControlButton(title: "Text", detail: "Aa", icon: "textformat") { showTextAppearance.toggle() }
-                                    .popover(isPresented: $showTextAppearance, arrowEdge: .bottom) {
-                                        PromptAppearanceInspector(model: model)
-                                    }
-                                Toggle("Mirror text", isOn: $model.mirrorText)
-                                    .toggleStyle(.switch)
-                                    .foregroundStyle(.white)
-                            }
-                            .frame(minWidth: proxy.size.width, alignment: .center)
-                            .padding(.horizontal, 2)
-                        }
-                    }
-                    .frame(height: 58)
-                    Text(footerMessage)
-                        .font(.caption)
-                        .foregroundStyle(
-                            (model.controlMode == .voice && !voice.isListening)
-                                || (model.controlMode == .recordedAudio && !recordedAudio.isReady)
-                                ? .orange : .white.opacity(0.7)
-                        )
-                }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 14)
-                .frame(maxWidth: .infinity)
-                .background(Color.black)
-                .overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.18)).frame(height: 1) }
-                .shadow(color: .black.opacity(0.7), radius: 14, y: -5)
-            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .onHover(perform: hoverChanged)
+            .overlay { clickThroughHintView }
         }
+        .background(keyboardShortcuts)
         .onReceive(timer) { now in
             let elapsed = now.timeIntervalSince(lastTick)
             lastTick = now
@@ -1555,6 +2065,8 @@ struct PromptView: View {
             offset = 0
             lastTick = Date()
             showTextAppearance = false
+            hoverBarVisible = false
+            presentClickThroughHintIfNeeded()
             voice.stop()
             recordedAudio.stop()
             if model.controlMode == .voice {
@@ -1575,7 +2087,9 @@ struct PromptView: View {
         .onChange(of: voice.isSpeaking) { _ in
             updatePredictiveCue()
         }
+        .onChange(of: model.placement) { _ in presentClickThroughHintIfNeeded() }
         .onAppear {
+            presentClickThroughHintIfNeeded()
             if model.controlMode == .voice {
                 activeWordIndex = -1
                 predictedWordIndex = -1
@@ -1605,6 +2119,359 @@ struct PromptView: View {
             }
         }
         .onExitCommand { model.closePrompter() }
+    }
+
+    // MARK: Layouts
+
+    /// Space and Esc stay available in every layout, even when the visible
+    /// controls are hidden behind hover.
+    private var keyboardShortcuts: some View {
+        ZStack {
+            Button("Play or pause", action: primaryAction)
+                .keyboardShortcut(.space, modifiers: [])
+                .disabled(primaryActionDisabled)
+            Button("Close prompter") { model.closePrompter() }
+                .keyboardShortcut(.cancelAction)
+        }
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
+    }
+
+    private var surfaceBorder: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
+    }
+
+    private var fullLayout: some View {
+        ZStack {
+            model.promptBackground.opacity(model.opacity).ignoresSafeArea()
+            scriptArea(style: .full).clipped()
+            VStack(spacing: 0) {
+                fullHeader
+                Spacer()
+                fullControlBar
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(surfaceBorder)
+    }
+
+    private var compactLayout: some View {
+        ZStack {
+            model.promptBackground.opacity(model.opacity)
+            scriptArea(style: .compact).clipped()
+            VStack {
+                Spacer()
+                hoverBar.padding(10)
+            }
+            .opacity(hoverBarVisible ? 1 : 0)
+            .allowsHitTesting(hoverBarVisible)
+            attentionDot
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(surfaceBorder)
+    }
+
+    private var notchLayout: some View {
+        ZStack(alignment: .top) {
+            // Always opaque black: anything else breaks the notch illusion.
+            NotchShape().fill(Color.black)
+            VStack(spacing: 0) {
+                Color.clear.frame(height: model.notchTopInset)
+                ZStack {
+                    scriptArea(style: .notch).clipped()
+                    VStack {
+                        Spacer()
+                        hoverBar.padding(.bottom, 4)
+                    }
+                    .opacity(hoverBarVisible ? 1 : 0)
+                    .allowsHitTesting(hoverBarVisible)
+                    attentionDot
+                }
+                notchResizeHandle
+            }
+            .padding(.horizontal, NotchShape.flare)
+        }
+        .clipShape(NotchShape())
+    }
+
+    private func scriptArea(style: PromptLayoutStyle) -> some View {
+        GeometryReader { proxy in
+            ScrollViewReader { reader in
+                ScrollView(.vertical, showsIndicators: false) {
+                    PromptWordFlow(
+                        words: scriptWords,
+                        progress: readingProgress,
+                        textColor: style == .notch ? model.notchTextColor : model.promptText,
+                        // Small layouts keep at least ~2 lines visible.
+                        fontSize: style == .full ? model.fontSize : min(model.fontSize, max(16, proxy.size.height / 3)),
+                        lineSpacing: model.lineSpacing
+                    )
+                        .padding(.horizontal, style == .full ? 56 : (style == .notch ? 16 : 20))
+                        // The notch keeps the reading line close to the camera,
+                        // but leaves room above it so a line stays readable
+                        // for a moment before it scrolls out of view.
+                        .padding(.top, style == .notch ? proxy.size.height * 0.35 : proxy.size.height * 0.42)
+                        .padding(.bottom, style == .notch ? proxy.size.height : proxy.size.height * 0.42)
+                        .scaleEffect(x: model.mirrorText ? -1 : 1, y: 1)
+                        // Normal mode retains its smooth continuous motion.
+                        // Voice mode uses the real matched word below.
+                        .offset(y: model.controlMode == .normal ? -offset : 0)
+                }
+                // Keep the continuously-scrolling mode gesture-free, but
+                // do not disable the voice ScrollView: doing so can also
+                // suppress ScrollViewReader's programmatic movement on
+                // macOS. Voice mode may additionally be repositioned by
+                // the presenter between spoken passages.
+                .scrollDisabled(model.controlMode == .normal)
+                .onChange(of: displayWordIndex) { index in
+                    guard model.controlMode != .normal, index >= 0 else { return }
+                    // A predictive cue may disappear during a short pause.
+                    // Do not visibly pull the prompt backward in response.
+                    guard index >= lastScrolledWordIndex else { return }
+                    lastScrolledWordIndex = index
+                    let anchor = style == .notch ? UnitPoint(x: 0.5, y: 0.4) : .center
+                    // The word views are created by a wrapping Layout.
+                    // Waiting one run-loop lets that layout expose the
+                    // target ID before attempting to scroll to it.
+                    DispatchQueue.main.async {
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            reader.scrollTo(index, anchor: anchor)
+                        }
+                    }
+                }
+                .onChange(of: scrollResetToken) { _ in
+                    // Voice mode's ScrollView keeps its physical position
+                    // between runs. Reset it independently of the word
+                    // matcher so Restart visibly returns to the beginning.
+                    DispatchQueue.main.async {
+                        reader.scrollTo(0, anchor: .center)
+                    }
+                }
+            }
+        }
+        // Small layouts fade lines out at the top edge instead of cutting
+        // them off; the full layout's header already covers that edge.
+        .mask(
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black, location: style == .full ? 0 : 0.22),
+                    .init(color: .black, location: 1),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+    }
+
+    private var fullHeader: some View {
+        HStack {
+            Button { model.closePrompter() } label: {
+                Label("Edit script", systemImage: "pencil")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .help("Return to the EchoPrompt Script Studio")
+            Spacer()
+            VStack(spacing: 2) {
+                Text(model.controlMode.name.uppercased())
+                Text(
+                    model.controlMode == .voice ? voice.status.uppercased()
+                        : (model.controlMode == .recordedAudio ? recordedAudio.status.uppercased()
+                            : (isPlaying ? "SCROLLING" : "PAUSED"))
+                )
+            }
+            .font(.caption.bold()).foregroundStyle(.white.opacity(0.9))
+            Spacer()
+            HStack(spacing: 8) {
+                captureBadge
+                placementMenu
+                Button(action: restartPrompt) { Image(systemName: "arrow.counterclockwise") }
+                    .help("Restart from the beginning")
+            }
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white.opacity(0.9))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color.black.opacity(0.96))
+    }
+
+    private var fullControlBar: some View {
+        VStack(spacing: 10) {
+            GeometryReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        PromptControlButton(
+                            title: "Slower",
+                            detail: model.controlMode == .voice ? "voice paced" : (model.controlMode == .recordedAudio ? "audio paced" : "− speed"),
+                            icon: "tortoise",
+                            isDisabled: model.controlMode != .normal
+                        ) { changeSpeed(forward: false) }
+                        PromptControlButton(
+                            title: controlButtonTitle,
+                            detail: controlButtonDetail,
+                            icon: controlButtonIcon,
+                            prominent: true,
+                            isDisabled: primaryActionDisabled,
+                            action: primaryAction
+                        )
+                        PromptControlButton(
+                            title: "Faster",
+                            detail: model.controlMode == .voice ? "voice paced" : (model.controlMode == .recordedAudio ? "audio paced" : "+ speed"),
+                            icon: "hare",
+                            isDisabled: model.controlMode != .normal
+                        ) { changeSpeed(forward: true) }
+                        PromptControlButton(title: "Text", detail: "Aa", icon: "textformat") { showTextAppearance.toggle() }
+                            .popover(isPresented: $showTextAppearance, arrowEdge: .bottom) {
+                                PromptAppearanceInspector(model: model)
+                            }
+                        Toggle("Mirror text", isOn: $model.mirrorText)
+                            .toggleStyle(.switch)
+                            .foregroundStyle(.white)
+                    }
+                    .frame(minWidth: proxy.size.width, alignment: .center)
+                    .padding(.horizontal, 2)
+                }
+            }
+            .frame(height: 58)
+            Text(footerMessage)
+                .font(.caption)
+                .foregroundStyle(needsAttention ? .orange : .white.opacity(0.7))
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity)
+        .background(Color.black)
+        .overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.18)).frame(height: 1) }
+        .shadow(color: .black.opacity(0.7), radius: 14, y: -5)
+    }
+
+    /// Controls for compact and notch layouts; fades in on hover.
+    private var hoverBar: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 4) {
+                HoverIconButton(icon: controlButtonIcon, label: controlButtonTitle, prominent: true, isDisabled: primaryActionDisabled, action: primaryAction)
+                HoverIconButton(icon: "tortoise", label: "Slower", isDisabled: model.controlMode != .normal) { changeSpeed(forward: false) }
+                HoverIconButton(icon: "hare", label: "Faster", isDisabled: model.controlMode != .normal) { changeSpeed(forward: true) }
+                HoverIconButton(icon: "arrow.counterclockwise", label: "Restart from the beginning", action: restartPrompt)
+                HoverIconButton(icon: "textformat", label: "Text appearance") { showTextAppearance.toggle() }
+                    .popover(isPresented: $showTextAppearance, arrowEdge: .bottom) {
+                        PromptAppearanceInspector(model: model, showsMirrorToggle: true)
+                    }
+                placementMenu
+                captureBadge
+                HoverIconButton(icon: "xmark", label: "Close prompter and edit script") { model.closePrompter() }
+            }
+            Text(compactStatus)
+                .font(.caption2)
+                .lineLimit(1)
+                .foregroundStyle(needsAttention ? .orange : .white.opacity(0.75))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color.black.opacity(0.88), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    /// Keeps warnings visible while the hover bar is hidden.
+    @ViewBuilder private var attentionDot: some View {
+        if needsAttention {
+            Circle()
+                .fill(Color.orange)
+                .frame(width: 6, height: 6)
+                .padding(10)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private var captureBadge: some View {
+        HoverIconButton(
+            icon: model.hideFromScreenCapture ? "eye.slash.fill" : "eye",
+            label: model.hideFromScreenCapture ? "Hidden from screen sharing. Click to show." : "Visible in screen sharing. Click to hide."
+        ) { model.hideFromScreenCapture.toggle() }
+    }
+
+    @ViewBuilder private func menuItemLabel(_ title: String, checked: Bool) -> some View {
+        if checked { Label(title, systemImage: "checkmark") } else { Text(title) }
+    }
+
+    /// A Menu rather than a popover: NSMenu windows are short-lived and
+    /// avoid adding another long-lived window that could leak into captures.
+    private var placementMenu: some View {
+        Menu {
+            Button { model.placement = .notch } label: { menuItemLabel("Notch / Top center", checked: model.placement == .notch) }
+            Menu("Corner") {
+                ForEach(PromptCorner.allCases) { corner in
+                    Button {
+                        model.corner = corner
+                        model.placement = .corner
+                    } label: { menuItemLabel(corner.name, checked: model.placement == .corner && model.corner == corner) }
+                }
+            }
+            Button { model.placement = .floating } label: { menuItemLabel("Floating", checked: model.placement == .floating) }
+            if model.placement == .notch {
+                Divider()
+                Menu("Notch width") {
+                    ForEach([440, 560, 760], id: \.self) { width in
+                        Button { model.setNotchWidth(CGFloat(width)) } label: {
+                            menuItemLabel(width == 440 ? "Small" : (width == 560 ? "Medium" : "Large"), checked: Int(model.notchSize.width) == width)
+                        }
+                    }
+                }
+            }
+            if model.availableDisplays.count > 1 {
+                Divider()
+                Menu("Display") {
+                    Button { model.targetDisplayID = nil } label: { menuItemLabel("Same as Script Studio", checked: model.targetDisplayID == nil) }
+                    ForEach(model.availableDisplays, id: \.key) { display in
+                        Button { model.targetDisplayID = display.key } label: { menuItemLabel(display.name, checked: model.targetDisplayID == display.key) }
+                    }
+                }
+            }
+            Divider()
+            Toggle("Hide from screen sharing", isOn: $model.hideFromScreenCapture)
+        } label: {
+            Image(systemName: "rectangle.3.group")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 24)
+                .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel("Prompter placement")
+    }
+
+    private var notchResizeHandle: some View {
+        Capsule()
+            .fill(Color.white.opacity(0.3))
+            .frame(width: 36, height: 4)
+            .frame(maxWidth: .infinity)
+            .frame(height: 12)
+            .contentShape(Rectangle())
+            .onHover { inside in inside ? NSCursor.resizeUpDown.push() : NSCursor.pop() }
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { _ in model.updateNotchHeightDrag() }
+                    .onEnded { _ in model.endNotchHeightDrag() }
+            )
+            .accessibilityLabel("Resize prompter height")
+    }
+
+    @ViewBuilder private var clickThroughHintView: some View {
+        if showClickThroughHint {
+            Text("Click-through is on. Use Space / Esc, or ⇧⌘E to return.")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color.black.opacity(0.85), in: Capsule())
+                .allowsHitTesting(false)
+                .transition(.opacity)
+        }
     }
 }
 
@@ -1721,6 +2588,8 @@ struct FlowLayout: Layout {
 /// than becoming another opaque layer across the reading surface.
 struct PromptAppearanceInspector: View {
     @ObservedObject var model: PrompterModel
+    /// Compact layouts have no control bar, so Mirror lives here instead.
+    var showsMirrorToggle = false
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
@@ -1731,9 +2600,38 @@ struct PromptAppearanceInspector: View {
                 Text("Line spacing \(String(format: "%.2f", model.lineSpacing))×").font(.caption.weight(.semibold))
                 SmoothSlider(value: $model.lineSpacing, range: 0.9...2.0)
             }
+            if showsMirrorToggle {
+                Toggle("Mirror text", isOn: $model.mirrorText).toggleStyle(.switch)
+            }
         }
         .padding(16)
         .frame(width: 320)
+        // The popover is its own window and must be hidden separately.
+        .background(CaptureVisibilityProbe(hidesFromCapture: model.hideFromScreenCapture))
+    }
+}
+
+/// A small icon button for compact and notch layouts. Deliberately has no
+/// `.help` tooltip: tooltip windows cannot be hidden from screen capture.
+struct HoverIconButton: View {
+    let icon: String
+    let label: String
+    var prominent = false
+    var isDisabled = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 24)
+                .background(prominent ? Color.accentColor : Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.4 : 1)
+        .accessibilityLabel(label)
     }
 }
 
@@ -1772,6 +2670,11 @@ struct SettingsView: View {
         Form {
             Slider(value: $model.opacity, in: 0.25...1) { Text("Prompt background opacity") }
             Toggle("Show recording-safe guidance", isOn: $model.showRecordingTip)
+            Toggle("Hide prompter from screen sharing & recordings", isOn: $model.hideFromScreenCapture)
+            Text("Works with most apps; run a test recording before going live. While on, the prompter is also left out of your own screenshots.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }.padding().frame(width: 390)
     }
 }
