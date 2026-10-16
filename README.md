@@ -135,4 +135,4 @@ Always verify a short recording before publishing it.
 
 ## License
 
-No license has been added yet. Add a license file before publishing or distributing the project.
+EchoPrompt is available under the [EchoPrompt Personal Use License](LICENSE). It may be used and modified for personal, non-commercial purposes only. Commercial use, resale, revenue-generating use, and relicensing are prohibited.
