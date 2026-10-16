@@ -255,7 +255,7 @@ export default function Home() {
         <div className="shell footer-inner">
           <div className="footer-branding">
             <a className="brand" href="#top"><span className="brand-mark" aria-hidden="true"><img src="/icon.png" alt="" /></span><span>EchoPrompt</span></a>
-            <p>Made by Arjun Sah <span aria-hidden="true">·</span> © 2026 EchoPrompt</p>
+            <p>Made in Portugal by Arjun Sah <span aria-hidden="true">·</span> © 2026 EchoPrompt</p>
           </div>
           <div className="footer-actions">
             <nav className="footer-links" aria-label="Footer navigation">
