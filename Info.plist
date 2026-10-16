@@ -4,6 +4,7 @@
 <key>CFBundleDisplayName</key><string>EchoPrompt</string>
 <key>CFBundleExecutable</key><string>EchoPrompt</string>
 <key>CFBundleIdentifier</key><string>com.echoprompt.app</string>
+<key>CFBundleIconFile</key><string>EchoPrompt.icns</string>
 <key>CFBundleName</key><string>EchoPrompt</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>1.0</string>
