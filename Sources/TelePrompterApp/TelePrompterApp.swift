@@ -965,7 +965,12 @@ struct PromptView: View {
                     GeometryReader { proxy in
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 12) {
-                                PromptControlButton(title: "Slower", detail: "− speed", icon: "tortoise") { changeSpeed(forward: false) }
+                                PromptControlButton(
+                                    title: "Slower",
+                                    detail: model.controlMode == .voice ? "voice paced" : "− speed",
+                                    icon: "tortoise",
+                                    isDisabled: model.controlMode == .voice
+                                ) { changeSpeed(forward: false) }
                                 PromptControlButton(
                                     title: model.controlMode == .voice ? (voice.isListening ? "Listening" : "Start voice") : (isPlaying ? "Pause" : "Play"),
                                     detail: model.controlMode == .voice ? "live follow" : playbackRateLabel,
@@ -979,7 +984,12 @@ struct PromptView: View {
                                     }
                                 }
                                     .keyboardShortcut(.space, modifiers: [])
-                                PromptControlButton(title: "Faster", detail: "+ speed", icon: "hare") { changeSpeed(forward: true) }
+                                PromptControlButton(
+                                    title: "Faster",
+                                    detail: model.controlMode == .voice ? "voice paced" : "+ speed",
+                                    icon: "hare",
+                                    isDisabled: model.controlMode == .voice
+                                ) { changeSpeed(forward: true) }
                                 PromptControlButton(title: "Text", detail: "Aa", icon: "textformat") { showTextAppearance.toggle() }
                                     .popover(isPresented: $showTextAppearance, arrowEdge: .bottom) {
                                         PromptAppearanceInspector(model: model)
@@ -1185,6 +1195,7 @@ struct PromptControlButton: View {
     let detail: String
     let icon: String
     var prominent = false
+    var isDisabled = false
     let action: () -> Void
 
     var body: some View {
@@ -1202,6 +1213,8 @@ struct PromptControlButton: View {
                 .background(prominent ? Color.accentColor : Color(red: 0.22, green: 0.22, blue: 0.24), in: RoundedRectangle(cornerRadius: 9))
         }
         .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.42 : 1)
         .accessibilityLabel(title)
     }
 }
