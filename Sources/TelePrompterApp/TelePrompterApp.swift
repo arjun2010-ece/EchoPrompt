@@ -93,6 +93,42 @@ enum PromptControlMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// A presentation-agnostic representation of word-level progress. Both live
+/// Voice control and future recorded-audio synchronization can supply this to
+/// the renderer without duplicating its visual state rules.
+struct PromptReadingProgress: Equatable {
+    var confirmedWordIndex: Int
+    var predictedWordIndex: Int?
+    var dimsCompletedWords: Bool
+
+    static let inactive = PromptReadingProgress(
+        confirmedWordIndex: -1,
+        predictedWordIndex: nil,
+        dimsCompletedWords: false
+    )
+
+    static func synchronized(confirmed: Int, predicted: Int?) -> PromptReadingProgress {
+        PromptReadingProgress(
+            confirmedWordIndex: confirmed,
+            predictedWordIndex: predicted,
+            dimsCompletedWords: true
+        )
+    }
+
+    enum WordState: Equatable {
+        case completed, current, predicted, upcoming
+    }
+
+    func state(for index: Int) -> WordState {
+        if dimsCompletedWords, confirmedWordIndex >= 0, index < confirmedWordIndex {
+            return .completed
+        }
+        if index == confirmedWordIndex { return .current }
+        if let predictedWordIndex, index == predictedWordIndex { return .predicted }
+        return .upcoming
+    }
+}
+
 /// On-device live transcription for Voice mode. It emits only newly recognized
 /// words, so the prompt can ignore filler words that don't occur in the script.
 final class VoiceScrollController: NSObject, ObservableObject {
@@ -760,6 +796,13 @@ struct PromptView: View {
     private var displayWordIndex: Int {
         max(activeWordIndex, predictedWordIndex)
     }
+    private var readingProgress: PromptReadingProgress {
+        guard model.controlMode == .voice else { return .inactive }
+        return .synchronized(
+            confirmed: activeWordIndex,
+            predicted: predictedWordIndex >= 0 ? predictedWordIndex : nil
+        )
+    }
 
     private func changeSpeed(forward: Bool) {
         let current = playbackRate
@@ -892,8 +935,7 @@ struct PromptView: View {
                     ScrollView(.vertical, showsIndicators: false) {
                         PromptWordFlow(
                             words: scriptWords,
-                            confirmedWordIndex: activeWordIndex,
-                            predictedWordIndex: predictedWordIndex,
+                            progress: readingProgress,
                             textColor: model.promptText,
                             fontSize: model.fontSize,
                             lineSpacing: model.lineSpacing
@@ -1079,8 +1121,7 @@ struct PromptView: View {
 /// the exact spoken word and reliably apply its orange underline.
 struct PromptWordFlow: View {
     let words: [String]
-    let confirmedWordIndex: Int
-    let predictedWordIndex: Int
+    let progress: PromptReadingProgress
     let textColor: Color
     let fontSize: Double
     let lineSpacing: Double
@@ -1091,19 +1132,33 @@ struct PromptWordFlow: View {
             verticalSpacing: max(8, CGFloat(fontSize * lineSpacing - fontSize))
         ) {
             ForEach(Array(words.enumerated()), id: \.offset) { item in
-                let isConfirmed = item.offset == confirmedWordIndex
-                let isPredicted = !isConfirmed && item.offset == predictedWordIndex
+                let state = progress.state(for: item.offset)
                 Text(item.element)
                     .font(.system(size: fontSize, weight: .medium))
-                    // Orange is the word confirmed by recognition. The softer
-                    // amber underline is an immediate one-word reading cue;
-                    // it disappears as soon as speech pauses.
-                    .foregroundStyle(isConfirmed ? Color.orange : (isPredicted ? Color.orange.opacity(0.65) : textColor))
-                    .underline(isConfirmed || isPredicted, color: isConfirmed ? .orange : .orange.opacity(0.55))
+                    .foregroundStyle(color(for: state))
+                    .underline(
+                        state == .current || state == .predicted,
+                        color: state == .current ? .orange : .orange.opacity(0.55)
+                    )
                     .id(item.offset)
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    private func color(for state: PromptReadingProgress.WordState) -> Color {
+        switch state {
+        case .completed:
+            // Softer than upcoming text while remaining readable on every
+            // selected prompt theme, including Paper.
+            textColor.opacity(0.46)
+        case .current:
+            .orange
+        case .predicted:
+            .orange.opacity(0.65)
+        case .upcoming:
+            textColor
+        }
     }
 }
 
