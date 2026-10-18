@@ -1,6 +1,7 @@
 #ifndef FLUTTER_PLUGIN_ECHOPROMPT_WINDOW_PLUGIN_H_
 #define FLUTTER_PLUGIN_ECHOPROMPT_WINDOW_PLUGIN_H_
 
+#include <flutter/encodable_value.h>
 #include <flutter/method_channel.h>
 #include <flutter/plugin_registrar_windows.h>
 #include <windows.h>
@@ -75,7 +76,7 @@ class EchopromptWindowPlugin : public flutter::Plugin {
   bool applying_ = false;
   double notch_extra_ = -1;
   LONG studio_style_ = 0, studio_exstyle_ = 0;
-  RECT studio_rect_{};
+  WINDOWPLACEMENT studio_placement_{sizeof(WINDOWPLACEMENT)};
   RECT gesture_rect_{};
   POINT gesture_mouse_{};
   double gesture_extra_ = 150;

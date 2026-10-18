@@ -254,10 +254,13 @@ void EchopromptWindowPlugin::Enter() {
   if (!in_prompter_) {
     studio_style_ = GetWindowLong(hwnd, GWL_STYLE);
     studio_exstyle_ = GetWindowLong(hwnd, GWL_EXSTYLE);
-    GetWindowRect(hwnd, &studio_rect_);
+    GetWindowPlacement(hwnd, &studio_placement_);
+    // A maximized Studio must become a normal window before applying overlay
+    // bounds. Otherwise Win32 retains its maximized geometry/style.
+    if (IsZoomed(hwnd) || IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
     in_prompter_ = true;
   }
-  LONG style = studio_style_ & ~(WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+  LONG style = studio_style_ & ~(WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_MAXIMIZE | WS_MINIMIZE);
   style |= WS_POPUP;
   SetWindowLong(hwnd, GWL_STYLE, style);
   // Capture visibility first: some tools snapshot the window list at start.
@@ -271,12 +274,11 @@ void EchopromptWindowPlugin::Exit() {
   if (!hwnd || !in_prompter_) return;
   in_prompter_ = false;
   SetWindowDisplayAffinity(hwnd, WDA_NONE);
-  SetWindowLong(hwnd, GWL_STYLE, studio_style_);
+  SetWindowLong(hwnd, GWL_STYLE, studio_style_ & ~(WS_MAXIMIZE | WS_MINIMIZE));
   SetWindowLong(hwnd, GWL_EXSTYLE, studio_exstyle_);
-  SetWindowPos(hwnd, HWND_NOTOPMOST, studio_rect_.left, studio_rect_.top,
-               studio_rect_.right - studio_rect_.left,
-               studio_rect_.bottom - studio_rect_.top,
-               SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+  SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED);
+  SetWindowPlacement(hwnd, &studio_placement_);
   SetForegroundWindow(hwnd);
 }
 
@@ -308,7 +310,7 @@ void EchopromptWindowPlugin::Apply() {
   int x, y, w, h;
   if (opt_.placement == "notch") {
     // Windows has no notch: dock at top centre, next to the webcam.
-    w = std::min(work_w, px(opt_.notch_w));
+    w = (std::min)(work_w, px(opt_.notch_w));
     h = px(notch_extra_ >= 0 ? notch_extra_ : opt_.notch_h);
     x = wa.left + (work_w - w) / 2;
     y = wa.top;
@@ -326,12 +328,13 @@ void EchopromptWindowPlugin::Apply() {
       x = mi.rcMonitor.left + px(opt_.fx);
       y = mi.rcMonitor.top + px(opt_.fy);
     } else {
-      w = px(900); h = px(360);
+      w = (std::min)(px(900), work_w * 9 / 10);
+      h = (std::min)(px(360), work_h * 9 / 10);
       x = wa.left + (work_w - w) / 2;
       y = wa.top + px(40);
     }
-    w = std::min(w, work_w);
-    h = std::min(h, work_h);
+    w = std::clamp(w, (std::min)(px(360), work_w * 9 / 10), work_w * 9 / 10);
+    h = std::clamp(h, (std::min)(px(200), work_h * 9 / 10), work_h * 9 / 10);
     // Keep at least 80 x 40 dips reachable after display changes.
     x = std::clamp(x, static_cast<int>(wa.left) - w + px(80), static_cast<int>(wa.right) - px(80));
     y = std::clamp(y, static_cast<int>(wa.top) - h + px(40), static_cast<int>(wa.bottom) - h);

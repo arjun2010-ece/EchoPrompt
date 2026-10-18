@@ -1,5 +1,6 @@
 #include "win32_window.h"
 
+#include <algorithm>
 #include <dwmapi.h>
 #include <flutter_windows.h>
 
@@ -134,10 +135,22 @@ bool Win32Window::Create(const std::wstring& title,
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   double scale_factor = dpi / 96.0;
 
+  // Keep the initial Studio window comfortably inside the work area, including
+  // on high-DPI laptops where 1280 logical pixels can exceed the whole display.
+  MONITORINFO monitor_info{sizeof(monitor_info)};
+  GetMonitorInfo(monitor, &monitor_info);
+  const RECT work = monitor_info.rcWork;
+  const int work_width = work.right - work.left;
+  const int work_height = work.bottom - work.top;
+  const int width = (std::min)(Scale(size.width, scale_factor), work_width * 9 / 10);
+  const int height = (std::min)(Scale(size.height, scale_factor), work_height * 9 / 10);
+  const int left = work.left + (work_width - width) / 2;
+  const int top = work.top + (work_height - height) / 2;
+
   HWND window = CreateWindow(
       window_class, title.c_str(), WS_OVERLAPPEDWINDOW,
-      Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
-      Scale(size.width, scale_factor), Scale(size.height, scale_factor),
+      left, top,
+      width, height,
       nullptr, nullptr, GetModuleHandle(nullptr), this);
 
   if (!window) {
