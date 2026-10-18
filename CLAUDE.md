@@ -2,12 +2,69 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Task scope and execution rules
+
+- Implement only the requested change and the directly necessary supporting
+  changes. Do not add extra features, speculative improvements, unrelated
+  refactors, formatting changes, or dependency upgrades.
+
+- Do not create, modify, repair, or run tests unless the user explicitly
+  requests testing. Do not introduce test frameworks, linters, or other
+  development tooling as part of an implementation task.
+
+- If you discover an unrelated bug or a pre-existing build failure, leave it
+  unchanged and briefly mention it in the final response. Fix errors caused
+  by your own changes.
+
+- For explanation, review, or planning requests, do not modify files or run
+  implementation commands unless requested.
+
+- Follow existing architecture and coding conventions. Do not split files,
+  introduce abstractions, or restructure the project unless necessary for
+  the requested outcome.
+
+## Efficient investigation and validation
+
+- Start with targeted searches and read only the relevant code sections.
+  Expand investigation when needed to understand dependencies or behavior;
+  avoid repeatedly reading entire files or scanning unrelated directories.
+
+- Use the smallest relevant validation for the change. For Swift changes,
+  prefer `swift build`; for web code changes, use `npm run build` from `web/`
+  when appropriate. Skip builds for documentation-only changes.
+
+- Do not repeatedly rebuild after a successful check unless further changes
+  or new evidence require it. Do not run both projects' builds when only one
+  project is affected.
+
+- Do not install dependencies unless required to complete the requested task
+  or its relevant validation. Preserve existing dependency versions and
+  avoid incidental lockfile changes.
+
+- Do not launch apps, start development servers, or request microphone/speech
+  permissions unless needed for the requested task. When a bundled macOS
+  build is needed without launching, use:
+  `ECHO_PROMPT_OPEN_AFTER_BUILD=0 ./build-app.sh`
+
+## Completion and communication
+
+- Make routine implementation decisions independently. Ask for clarification
+  only when ambiguity materially affects the requested behavior.
+
+- Keep progress updates and the final response concise. Report what changed,
+  relevant validation results, and any remaining blocker. Do not reproduce
+  large code sections or command logs unless requested.
+
+- Stop when the requested behavior is implemented and relevant validation
+  is complete. Do not start optional cleanup or additional improvement work.
+  
 ## Repository layout
 
 Two independent projects share this repo:
 
 - **Root** — EchoPrompt, a native macOS 13+ teleprompter (SwiftUI + AppKit, Swift Package, no third-party dependencies). The package is named `EchoPrompt`; the target/source folder is still `TelePrompterApp`.
 - **`web/`** — the Next.js (App Router, TypeScript) marketing site, deployed separately via Netlify (`netlify.toml` sets `base = "web"`).
+- **`Sources/`**  - it is old poc and sometimes considered as a reference when explcily specified. Currently our implementation is happening with flutter framework.
 
 There are no tests or linters configured in either project.
 

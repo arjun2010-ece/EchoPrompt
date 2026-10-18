@@ -804,12 +804,32 @@ final class RecordedAudioController: NSObject, ObservableObject, AVAudioPlayerDe
     }
 }
 
+private struct PointingHandCursor: ViewModifier {
+    @State private var isHovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { inside in
+                guard inside != isHovering else { return }
+                isHovering = inside
+                if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            }
+            .onDisappear {
+                if isHovering { NSCursor.pop(); isHovering = false }
+            }
+    }
+}
+
+extension View {
+    func pointingHandCursor() -> some View { modifier(PointingHandCursor()) }
+}
+
 @MainActor
 final class PrompterModel: ObservableObject {
     @Published var script = "Welcome to EchoPrompt.\n\nPaste your script here, then start EchoPrompt when you are ready."
-    @Published var fontSize: Double = 50
+    @Published var fontSize: Double = 25
     @Published var speed: Double = 24
-    @Published var lineSpacing: Double = 1.28
+    @Published var lineSpacing: Double = 1.0
     @Published var opacity: Double = 0.92
     @Published var mirrorText = false
     /// Normal scrolling is deliberately the default; modes are mutually exclusive.
@@ -1445,6 +1465,7 @@ struct EditorView: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                         .keyboardShortcut(.return, modifiers: [.command])
+                        .pointingHandCursor()
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
@@ -1570,10 +1591,12 @@ struct EditorView: View {
                             ForEach(PromptTheme.allCases) { Text($0.name).tag($0) }
                         }
                         .pickerStyle(.segmented)
+                        .pointingHandCursor()
                         Picker("Studio appearance", selection: $model.studioAppearance) {
                             ForEach(StudioAppearance.allCases) { Text($0.name).tag($0) }
                         }
                         .pickerStyle(.segmented)
+                        .pointingHandCursor()
                     }
                 }
 

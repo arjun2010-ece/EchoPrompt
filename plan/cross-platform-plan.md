@@ -373,7 +373,7 @@ Build all functionality across all platforms in parallel:
 8. Script persistence: `UserDefaults` on mobile/macOS, Android app storage. **POC migration:** existing macOS users keep scripts and settings via same bundle ID.
 9. `Entitlements` interface with "everything unlocked" stub. Script IDs and content fingerprints for paywall later.
 10. `AnalyticsService` interface (no-op sink for now); events wired at call sites.
-11. Opt-in crash reporting (Sentry).
+11. Opt-in crash reporting (Sentry). Make it option for the timebeing.
 
 ### Phase 2: Manual testing (≈2–3 weeks)
 
