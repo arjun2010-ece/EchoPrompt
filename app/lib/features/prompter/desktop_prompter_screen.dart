@@ -229,6 +229,11 @@ class _DesktopPrompterScreenState extends ConsumerState<DesktopPrompterScreen> {
 
   void _quit() {
     ref.read(prompterProvider.notifier).pause();
+    // Engine shutdown can take a few seconds on Windows; hide the window and
+    // tray icon first so quitting looks instant.
+    unawaited(EchoPromptWindow.setPrompterVisible(false));
+    EchoPromptWindow.unregisterHotkeys();
+    EchoPromptWindow.setTrayMenu(null);
     ServicesBinding.instance.exitApplication(AppExitType.required);
   }
 
