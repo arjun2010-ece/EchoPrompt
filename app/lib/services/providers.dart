@@ -220,6 +220,7 @@ class StudioNotifier extends Notifier<StudioState> {
       scriptRevision: state.scriptRevision + 1,
       resumeWordIndex: () => null,
     );
+    flush();
   }
 }
 

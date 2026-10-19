@@ -5,32 +5,73 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../platform.dart';
 
 /// Script import/export. Mobile exports go through the share sheet, which on
 /// Android covers the Storage Access Framework and on iOS the Files app.
 class ScriptIO {
-  static Future<String?> importText() async {
-    final f = await FilePicker.pickFile(type: FileType.custom, allowedExtensions: ['txt', 'md']);
+  static const _importDirKey = 'EchoPrompt.lastImportDir.v1';
+  static const _exportDirKey = 'EchoPrompt.lastExportDir.v1';
+
+  /// Folder a picker opens in: the last one used (kept across launches) if it
+  /// still exists, else [fallback], created on demand so the dialog can open
+  /// there. Exports default to their own folder, never loose in Documents.
+  static Future<String?> _startDir(SharedPreferences prefs, String key, Directory fallback) async {
+    if (isMobile) return null;
+    final last = prefs.getString(key);
+    if (last != null && Directory(last).existsSync()) return last;
+    await fallback.create(recursive: true);
+    return fallback.path;
+  }
+
+  /// [scriptsDir] is the library folder; imports open there until the user
+  /// picks somewhere else.
+  static Future<String?> importText(SharedPreferences prefs, Directory scriptsDir) async {
+    final f = await FilePicker.pickFile(
+      type: FileType.custom,
+      allowedExtensions: ['txt', 'md'],
+      initialDirectory: await _startDir(prefs, _importDirKey, scriptsDir),
+    );
     if (f == null) return null;
+    if (f.path != null) await prefs.setString(_importDirKey, p.dirname(f.path!));
     final bytes = await f.readAsBytes();
     return utf8.decode(bytes, allowMalformed: true);
   }
 
-  static Future<void> exportText(String title, String body) async {
-    final name = '${title.replaceAll(RegExp(r'[\\/:*?"<>|]'), ' ').trim().isEmpty ? 'Script' : title.replaceAll(RegExp(r'[\\/:*?"<>|]'), ' ').trim()}.txt';
+  /// Returns the saved path on desktop, or null if cancelled or shared.
+  /// Desktop exports open in `<scriptsDir>/Exports` until the user picks
+  /// another folder, which is then remembered.
+  static Future<String?> exportText(
+    String title,
+    String body, {
+    required SharedPreferences prefs,
+    required Directory scriptsDir,
+  }) async {
+    final clean = title
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), ' ')
+        .trim()
+        .split(RegExp(r'\s+'))
+        .take(8)
+        .join(' ');
+    final name = '${clean.isEmpty ? 'Script' : clean}.txt';
     if (isMobile) {
       await SharePlus.instance.share(ShareParams(files: [XFile.fromData(utf8.encode(body), mimeType: 'text/plain', name: name)], fileNameOverrides: [name]));
-    } else {
-      await FilePicker.saveFile(
-        fileName: name,
-        bytes: Uint8List.fromList(utf8.encode(body)),
-        mimeType: 'text/plain',
-        type: FileType.custom,
-        allowedExtensions: ['txt'],
-      );
+      return null;
     }
+    final uri = await FilePicker.saveFile(
+      fileName: name,
+      initialDirectory: await _startDir(prefs, _exportDirKey, Directory(p.join(scriptsDir.path, 'Exports'))),
+      bytes: Uint8List.fromList(utf8.encode(body)),
+      mimeType: 'text/plain',
+      type: FileType.custom,
+      allowedExtensions: ['txt'],
+    );
+    if (uri == null) return null;
+    final path = uri.toFilePath();
+    await prefs.setString(_exportDirKey, p.dirname(path));
+    return path;
   }
 
   static Future<String?> chooseAudio() async {

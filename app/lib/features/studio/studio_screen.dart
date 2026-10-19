@@ -69,7 +69,7 @@ class _StudioScreenState extends ConsumerState<StudioScreen> {
             tooltip: 'Import script',
             icon: const Icon(Icons.file_open_outlined),
             onPressed: () async {
-              final t = await ScriptIO.importText();
+              final t = await ScriptIO.importText(ref.read(prefsProvider), ref.read(libraryProvider).directory);
               if (t != null) {
                 await notifier.importScript(t);
                 _setText(t);
@@ -81,7 +81,12 @@ class _StudioScreenState extends ConsumerState<StudioScreen> {
             icon: const Icon(Icons.ios_share),
             onPressed: () {
               final body = ref.read(studioProvider).script;
-              ScriptIO.exportText(body.split('\n').first, body);
+              ScriptIO.exportText(
+                body.split('\n').first,
+                body,
+                prefs: ref.read(prefsProvider),
+                scriptsDir: ref.read(libraryProvider).directory,
+              );
             },
           ),
         ],

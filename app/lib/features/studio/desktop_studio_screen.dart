@@ -76,15 +76,25 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
   }
 
   Future<void> _import() async {
-    final text = await ScriptIO.importText();
+    final text = await ScriptIO.importText(
+      ref.read(prefsProvider),
+      ref.read(libraryProvider).directory,
+    );
     if (text != null) {
       await ref.read(studioProvider.notifier).importScript(text);
     }
   }
 
-  void _export() {
+  Future<void> _export() async {
     final body = ref.read(studioProvider).script;
-    ScriptIO.exportText(body.split('\n').first, body);
+    final path = await ScriptIO.exportText(
+      body.split('\n').first,
+      body,
+      prefs: ref.read(prefsProvider),
+      scriptsDir: ref.read(libraryProvider).directory,
+    );
+    if (path == null || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Exported to $path')));
   }
 
   void _start() {
