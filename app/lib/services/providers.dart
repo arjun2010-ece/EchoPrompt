@@ -1,4 +1,5 @@
 import 'platform.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -113,21 +114,49 @@ class StudioNotifier extends Notifier<StudioState> {
   /// Id of the saved script being edited, if any.
   String? get currentId => _currentId;
 
-  void setScript(String text) => state = state.copyWith(script: text);
+  Timer? _saveTimer;
+  Future<void> _saving = Future.value();
 
-  /// Saves the script and starts a new presentation session.
-  Future<void> start() async {
-    final lib = ref.read(libraryProvider);
-    final existing = state.history.where((s) => s.id == _currentId).firstOrNull;
+  /// Typing saves the script to the list once it pauses, so a new script
+  /// appears as soon as it has content rather than only after Start.
+  void setScript(String text) {
+    state = state.copyWith(script: text);
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(seconds: 1), flush);
+  }
+
+  /// Saves pending edits now. Blank text and the untouched welcome text are
+  /// placeholders, not scripts, so they are never saved.
+  Future<void> flush() {
+    _saveTimer?.cancel();
+    _saveTimer = null;
+    final text = state.script;
+    if (text.trim().isEmpty || (_currentId == null && text == welcome)) return _saving;
+    return _persist(_currentId ??= DateTime.now().microsecondsSinceEpoch.toString(), text);
+  }
+
+  /// Saves run one after another so each sees the previous save's history and
+  /// file name.
+  Future<void> _persist(String id, String text) => _saving = _saving.then((_) async {
+    final existing = state.history.where((s) => s.id == id).firstOrNull;
+    if (existing != null && existing.body == text) return;
     final script = SavedScript(
-      id: _currentId ??= DateTime.now().microsecondsSinceEpoch.toString(),
-      body: state.script,
+      id: id,
+      body: text,
       savedAt: DateTime.now(),
       fileName: existing?.fileName,
     );
+    final history = await ref.read(libraryProvider).save(state.history, script);
+    state = state.copyWith(history: history);
+  });
+
+  /// Saves the script and starts a new presentation session.
+  Future<void> start() async {
+    final id = _currentId ?? DateTime.now().microsecondsSinceEpoch.toString();
+    final script = SavedScript(id: id, body: state.script, savedAt: DateTime.now());
     if (!ref.read(entitlementsProvider).canStartPrompter(script)) return;
-    final history = await lib.save(state.history, script);
-    state = state.copyWith(history: history, sessionId: state.sessionId + 1, presenting: true);
+    await flush();
+    state = state.copyWith(sessionId: state.sessionId + 1, presenting: true);
     ref.read(analyticsProvider).log('teleprompter_start', {
       'mode': ref.read(settingsProvider).mode.name,
       'words_bucket': AnalyticsService.wordsBucket(state.script.split(RegExp(r'\s+')).length),
@@ -135,6 +164,7 @@ class StudioNotifier extends Notifier<StudioState> {
   }
 
   void load(SavedScript s) {
+    flush();
     _currentId = s.id;
     state = state.copyWith(
       script: s.body,
@@ -145,6 +175,7 @@ class StudioNotifier extends Notifier<StudioState> {
 
   /// Starts an empty script; it is saved on the first Start.
   void newScript() {
+    flush();
     _currentId = null;
     state = state.copyWith(
       script: '',
@@ -155,6 +186,7 @@ class StudioNotifier extends Notifier<StudioState> {
 
   /// Opens a copy of [s] as a new, unsaved script.
   void duplicate(SavedScript s) {
+    flush();
     _currentId = null;
     state = state.copyWith(
       script: s.body,
@@ -164,6 +196,8 @@ class StudioNotifier extends Notifier<StudioState> {
   }
 
   Future<void> delete(SavedScript s) async {
+    if (s.id == _currentId) _saveTimer?.cancel();
+    await _saving;
     final history = await ref.read(libraryProvider).delete(state.history, s);
     if (s.id == _currentId) _currentId = null;
     state = state.copyWith(history: history);
@@ -176,6 +210,7 @@ class StudioNotifier extends Notifier<StudioState> {
 
   /// Loads an imported script as a new, unsaved script.
   Future<void> importScript(String body) async {
+    flush();
     _currentId = null;
     state = state.copyWith(
       script: body,

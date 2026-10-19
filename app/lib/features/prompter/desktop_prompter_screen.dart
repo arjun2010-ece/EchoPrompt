@@ -238,7 +238,10 @@ class _DesktopPrompterScreenState extends ConsumerState<DesktopPrompterScreen> {
     // Windows keeps the busy cursor for seconds while the engine shuts down
     // gracefully, so end the process once the window is gone.
     if (Platform.isWindows) {
-      Future<void>.delayed(const Duration(milliseconds: 100), () => exit(0));
+      final saved = ref.read(studioProvider.notifier).flush();
+      Future<void>.delayed(const Duration(milliseconds: 100))
+          .then((_) => saved)
+          .whenComplete(() => exit(0));
       return;
     }
     ServicesBinding.instance.exitApplication(AppExitType.required);
