@@ -5,7 +5,6 @@ import 'package:path/path.dart' as p;
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 
 import '../../core/matching/audio_aligner.dart';
-import '../../core/script/text.dart';
 import 'model_store.dart';
 import 'speech_engine.dart';
 
@@ -71,22 +70,19 @@ class SherpaSpeechEngine implements SpeechEngine {
   Stream<List<String>> listen(Stream<Float32List> samples) async* {
     final rec = _onlineRecognizer();
     final stream = rec.createStream();
-    var emitted = 0;
+    final emitter = StableWordEmitter();
     try {
       await for (final chunk in samples) {
         stream.acceptWaveform(samples: chunk, sampleRate: 16000);
         while (rec.isReady(stream)) {
           rec.decode(stream);
         }
-        final words = spokenWords(rec.getResult(stream).text);
-        final fresh = newWordsSince(words, emitted);
-        if (fresh.isNotEmpty) {
-          emitted = words.length;
-          yield fresh;
-        }
+        final fresh = emitter.update(rec.getResult(stream).text, chunk.length / 16000);
+        if (fresh.isNotEmpty) yield fresh;
         if (rec.isEndpoint(stream)) {
+          final tail = emitter.flush();
+          if (tail.isNotEmpty) yield tail;
           rec.reset(stream);
-          emitted = 0;
         }
       }
     } finally {

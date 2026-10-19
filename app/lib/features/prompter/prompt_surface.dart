@@ -35,6 +35,7 @@ class PromptSurface extends ConsumerStatefulWidget {
     this.onWordTap,
     this.previewWordIndex,
     this.scriptOverride,
+    this.coveredByDesktopChrome = false,
   });
 
   final PromptLayoutStyle style;
@@ -54,7 +55,15 @@ class PromptSurface extends ConsumerStatefulWidget {
   /// Replaces the script from [studioProvider]; lets a preview debounce typing.
   final String? scriptOverride;
 
+  /// Desktop full layout: a header and control bar overlay the top and bottom
+  /// edges, so the reading line must sit between them.
+  final bool coveredByDesktopChrome;
+
   bool get isPreview => previewWordIndex != null;
+
+  /// Approximate heights of the desktop full layout's header and control bar.
+  static const _fullHeaderInset = 52.0;
+  static const _fullControlBarInset = 110.0;
 
   @override
   ConsumerState<PromptSurface> createState() => _PromptSurfaceState();
@@ -160,9 +169,16 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
       final fontSize = style == PromptLayoutStyle.full
           ? settings.fontSize
           : math.min(settings.fontSize, math.max(16.0, h / 3));
-      final topPad = h * (notch ? 0.35 : 0.42);
-      final bottomPad = notch ? h : h * 0.42;
-      final anchorY = h * (notch ? 0.4 : 0.5);
+      // The full layout's header and control bar cover the top and bottom edges
+      // (desktop), so its reading line sits in the clear band between them;
+      // otherwise upcoming lines would hide under the bar.
+      final clearTop = style == PromptLayoutStyle.full && widget.coveredByDesktopChrome ? PromptSurface._fullHeaderInset : 0.0;
+      final clearBottom = style == PromptLayoutStyle.full && widget.coveredByDesktopChrome ? PromptSurface._fullControlBarInset : 0.0;
+      final clearH = math.max(0.0, h - clearTop - clearBottom);
+      final fullDesktop = clearTop > 0;
+      final topPad = fullDesktop ? clearTop + clearH * 0.3 : h * (notch ? 0.35 : 0.42);
+      final anchorY = fullDesktop ? clearTop + clearH * 0.4 : h * (notch ? 0.4 : 0.5);
+      final bottomPad = notch ? h : (fullDesktop ? math.max(0.0, h - anchorY) : h * 0.42);
       _anchorY = anchorY;
       _topPad = topPad;
       final width = math.max(40.0, c.maxWidth - hPad * 2);

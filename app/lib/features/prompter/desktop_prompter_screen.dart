@@ -419,6 +419,7 @@ class _DesktopPrompterScreenState extends ConsumerState<DesktopPrompterScreen> {
     onDragStart: EchoPromptWindow.gestureBegin,
     onDragUpdate: EchoPromptWindow.dragUpdate,
     onDragEnd: EchoPromptWindow.gestureEnd,
+    coveredByDesktopChrome: style == PromptLayoutStyle.full,
   );
 
   Widget _frame(Widget child) => ClipRRect(

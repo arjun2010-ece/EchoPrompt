@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../../core/matching/audio_aligner.dart';
+import '../../core/script/text.dart';
 
 /// Streaming + offline recognition behind one interface so engines can be
 /// swapped (plan §5). Implementations must be on-device.
@@ -61,6 +62,45 @@ List<TranscriptSegment> groupTokensIntoWords(
 /// for this utterance.
 List<String> newWordsSince(List<String> current, int alreadyEmitted) =>
     current.length > alreadyEmitted ? current.sublist(alreadyEmitted) : const [];
+
+/// Turns the recogniser's changing hypothesis into words that can be trusted.
+/// A streaming recogniser spells a word out piece by piece ("fi" -> "five") and
+/// may revise its latest word, so the newest word is held back until the next
+/// word starts, the hypothesis stops changing for [settleSeconds] of audio, or
+/// the utterance ends ([flush]). The recogniser only refreshes its text every
+/// few hundred ms, so the settle time must be well above that.
+class StableWordEmitter {
+  StableWordEmitter({this.settleSeconds = 0.8});
+
+  final double settleSeconds;
+  var _emitted = 0;
+  var _last = '';
+  var _unchanged = 0.0;
+
+  /// [hypothesis] is the recogniser's current text for the utterance and
+  /// [seconds] the audio fed since the previous call.
+  List<String> update(String hypothesis, double seconds) {
+    final words = spokenWords(hypothesis);
+    _unchanged = hypothesis == _last ? _unchanged + seconds : 0;
+    _last = hypothesis;
+    if (words.length < _emitted) _emitted = words.length;
+    final stable = _unchanged >= settleSeconds ? words.length : words.length - 1;
+    if (stable <= _emitted) return const [];
+    final fresh = words.sublist(_emitted, stable);
+    _emitted = stable;
+    return fresh;
+  }
+
+  /// Releases whatever is left at the end of an utterance and starts afresh.
+  List<String> flush() {
+    final words = spokenWords(_last);
+    final fresh = _emitted < words.length ? words.sublist(_emitted) : const <String>[];
+    _emitted = 0;
+    _last = '';
+    _unchanged = 0;
+    return fresh;
+  }
+}
 
 Float32List pcm16ToFloat(Uint8List bytes) {
   final data = ByteData.sublistView(bytes);
