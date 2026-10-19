@@ -1,5 +1,6 @@
 import '../../services/platform.dart';
 import 'dart:async';
+import 'dart:io' show Platform, exit;
 import 'dart:math' as math;
 import 'dart:ui' show AppExitType;
 
@@ -229,6 +230,17 @@ class _DesktopPrompterScreenState extends ConsumerState<DesktopPrompterScreen> {
 
   void _quit() {
     ref.read(prompterProvider.notifier).pause();
+    // Engine shutdown can take a few seconds on Windows; hide the window and
+    // tray icon first so quitting looks instant.
+    unawaited(EchoPromptWindow.setPrompterVisible(false));
+    EchoPromptWindow.unregisterHotkeys();
+    EchoPromptWindow.setTrayMenu(null);
+    // Windows keeps the busy cursor for seconds while the engine shuts down
+    // gracefully, so end the process once the window is gone.
+    if (Platform.isWindows) {
+      Future<void>.delayed(const Duration(milliseconds: 100), () => exit(0));
+      return;
+    }
     ServicesBinding.instance.exitApplication(AppExitType.required);
   }
 
