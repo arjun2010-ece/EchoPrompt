@@ -37,7 +37,9 @@ class SettingsNotifier extends Notifier<PromptSettings> {
   PromptSettings build() {
     final raw = ref.read(prefsProvider).getString(settingsKey);
     if (raw == null) return const PromptSettings();
-    return PromptSettings.fromJson(jsonDecode(raw) as Map<String, Object?>);
+    // The control mode is per session: every launch starts in Normal.
+    return PromptSettings.fromJson(jsonDecode(raw) as Map<String, Object?>)
+        .copyWith(mode: PromptControlMode.normal);
   }
 
   void update(PromptSettings Function(PromptSettings) f) {

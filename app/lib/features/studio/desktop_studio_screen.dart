@@ -42,6 +42,7 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
     super.initState();
     final studio = ref.read(studioProvider);
     _controller = TextEditingController(text: studio.script)
+      ..selection = const TextSelection.collapsed(offset: 0)
       ..addListener(_onCaretMoved);
     // Coming back from the prompter: put the caret where the presenter stopped.
     final resume = studio.resumeWordIndex;
