@@ -59,7 +59,11 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       setState(() => _error = 'Camera and microphone access are needed to record.');
       return;
     }
-    _route = await EchoPromptCamera.headphonesConnected ? ReferenceRoute.headphones : ReferenceRoute.silent;
+    // Audio mode's video must contain the audio file, so it plays out loud and
+    // the microphone records it; other modes pace silently or into headphones.
+    _route = ref.read(settingsProvider).mode == PromptControlMode.recordedAudio
+        ? ReferenceRoute.speaker
+        : await EchoPromptCamera.headphonesConnected ? ReferenceRoute.headphones : ReferenceRoute.silent;
     _events = EchoPromptCamera.events.listen((e) {
       final type = e['type'];
       if (type == 'interrupted' || type == 'storage_full') _onStopped(null, '$type');
@@ -179,8 +183,10 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen(settingsProvider.select((s) => s.mode), (_, _) {
-      if (!_recording) _beginPrompter();
+    ref.listen(settingsProvider.select((s) => s.mode), (_, mode) {
+      if (_recording) return;
+      if (mode == PromptControlMode.recordedAudio) _route = ReferenceRoute.speaker;
+      _beginPrompter();
     });
     final media = MediaQuery.of(context);
     final landscape = media.orientation == Orientation.landscape;
@@ -281,9 +287,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                 CheckedPopupMenuItem(value: 'countdown', checked: _useCountdown, child: const Text('3-2-1 countdown')),
                 const PopupMenuDivider(),
                 const PopupMenuItem(enabled: false, child: Text('Reference audio plays through')),
-                CheckedPopupMenuItem(value: 'headphones', checked: _route == ReferenceRoute.headphones, child: const Text('Headphones')),
-                CheckedPopupMenuItem(value: 'silent', checked: _route == ReferenceRoute.silent, child: const Text('Silent pacing')),
-                CheckedPopupMenuItem(value: 'speaker', checked: _route == ReferenceRoute.speaker, child: const Text('Speaker (audible in video)')),
+                CheckedPopupMenuItem(value: 'headphones', checked: _route == ReferenceRoute.headphones, child: const Text('Headphones (not in the video)')),
+                CheckedPopupMenuItem(value: 'silent', checked: _route == ReferenceRoute.silent, child: const Text('Silent pacing (not in the video)')),
+                CheckedPopupMenuItem(value: 'speaker', checked: _route == ReferenceRoute.speaker, child: const Text('Speaker (in the video)')),
               ],
             ),
           ]),
