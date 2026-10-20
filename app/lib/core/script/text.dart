@@ -11,6 +11,13 @@ String normalizeWord(String word) => word
     .where(_letterOrDigit.hasMatch)
     .join();
 
+final _blankLineRun = RegExp(r'[ \t]*(?:\r?\n[ \t]*){3,}');
+
+/// [script] with any run of two or more blank lines cut to a single blank
+/// line. Only for display: word positions are unchanged, and a single blank
+/// line, or none, is left as written.
+String tidyBlankLines(String script) => script.replaceAll(_blankLineRun, '\n\n');
+
 /// Script words as displayed: split on whitespace, punctuation kept.
 List<String> scriptWords(String script) =>
     script.split(_whitespace).where((w) => w.isNotEmpty).toList();

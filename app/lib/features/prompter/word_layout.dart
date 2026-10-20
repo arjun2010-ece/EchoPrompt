@@ -21,6 +21,18 @@ class WordLayout {
 
   double get height => painter.height;
 
+  static final _paragraphGap = RegExp(r'\n\s*\n');
+
+  /// First word of the next paragraph if a blank line follows one of the
+  /// [within] words starting at [from], else null.
+  int? paragraphStartWithin(int from, int within) {
+    final end = (from + within).clamp(0, ranges.length - 1);
+    for (var k = from; k < end; k++) {
+      if (_paragraphGap.hasMatch(script.substring(ranges[k].end, ranges[k + 1].start))) return k + 1;
+    }
+    return null;
+  }
+
   /// Vertical centre of word [i].
   double midY(int i) {
     final boxes = painter.getBoxesForSelection(

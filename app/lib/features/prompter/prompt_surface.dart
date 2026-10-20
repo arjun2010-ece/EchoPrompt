@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../core/progress/reading_progress.dart';
+import '../../core/script/text.dart';
 import '../../core/settings/prompt_settings.dart';
 import '../../services/platform.dart';
 import '../../services/providers.dart';
@@ -65,6 +66,12 @@ class PromptSurface extends ConsumerStatefulWidget {
   static const _fullHeaderInset = 52.0;
   static const _fullControlBarInset = 110.0;
 
+  /// Words Voice mode scrolls ahead of the highlight, about the recognizer's lag.
+  static const _voiceLeadWords = 2;
+
+  /// Voice mode starts scrolling to the next paragraph this many words before the break.
+  static const _paragraphLookWords = 3;
+
   @override
   ConsumerState<PromptSurface> createState() => _PromptSurfaceState();
 }
@@ -75,6 +82,8 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
   Duration _last = Duration.zero;
   double _offset = 0;
   double _followTarget = 0;
+  String _rawScript = '';
+  String _tidyScript = '';
   WordLayout? _layout;
   Object? _layoutKey;
   int _resetToken = -1;
@@ -129,7 +138,8 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
       }
     } else if ((_followTarget - _offset).abs() > 0.05) {
       // Frame-rate independent exponential easing toward the spoken word.
-      _offset += (_followTarget - _offset) * (1 - math.exp(-dt / 0.38));
+      final settle = settings.mode == PromptControlMode.voice ? 0.25 : 0.38;
+      _offset += (_followTarget - _offset) * (1 - math.exp(-dt / settle));
     } else {
       return;
     }
@@ -149,7 +159,12 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
   Widget build(BuildContext context) {
     final settings = ref.watch(settingsProvider);
     final studioScript = ref.watch(studioProvider.select((s) => s.script));
-    final script = widget.scriptOverride ?? studioScript;
+    final rawScript = widget.scriptOverride ?? studioScript;
+    if (rawScript != _rawScript) {
+      _rawScript = rawScript;
+      _tidyScript = tidyBlankLines(rawScript);
+    }
+    final script = _tidyScript;
     final preview = widget.isPreview;
     final pr = preview ? const PrompterState() : ref.watch(prompterProvider);
     if (!preview) _syncWakelock(pr.playing);
@@ -207,8 +222,19 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
 
       final idx = math.max(pr.progress.confirmedWordIndex, pr.progress.predictedWordIndex ?? -1);
       if (!preview && settings.mode != PromptControlMode.normal && idx >= 0 && idx < layout.ranges.length) {
+        // Live recognition trails the voice by a couple of words, so Voice mode
+        // scrolls to where the reader already is. With big text only a line or
+        // two is visible, and waiting for the highlight would stall the reader.
+        final lead = settings.mode == PromptControlMode.voice ? PromptSurface._voiceLeadWords : 0;
+        var scrollWord = math.min(idx + lead, layout.ranges.length - 1);
+        // Near the end of a paragraph, bring the next one up while the reader
+        // is still finishing this one, instead of after the pause that follows.
+        if (lead > 0) {
+          final next = layout.paragraphStartWithin(idx, PromptSurface._paragraphLookWords);
+          if (next != null) scrollWord = math.max(scrollWord, next);
+        }
         // Never pull the prompt backward for a short-lived predictive cue.
-        _followTarget = math.max(_followTarget, math.max(0.0, topPad + layout.midY(idx) - anchorY));
+        _followTarget = math.max(_followTarget, math.max(0.0, topPad + layout.midY(scrollWord) - anchorY));
       }
 
       Widget text = Text.rich(

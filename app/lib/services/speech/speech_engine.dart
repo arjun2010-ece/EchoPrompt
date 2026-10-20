@@ -70,7 +70,7 @@ List<String> newWordsSince(List<String> current, int alreadyEmitted) =>
 /// the utterance ends ([flush]). The recogniser only refreshes its text every
 /// few hundred ms, so the settle time must be well above that.
 class StableWordEmitter {
-  StableWordEmitter({this.settleSeconds = 0.8});
+  StableWordEmitter({this.settleSeconds = 0.4});
 
   final double settleSeconds;
   var _emitted = 0;
