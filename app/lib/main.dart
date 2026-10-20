@@ -10,6 +10,7 @@ import 'features/studio/desktop_studio_screen.dart';
 import 'features/studio/studio_screen.dart';
 import 'services/platform.dart';
 import 'services/providers.dart';
+import 'ui/mobile_theme.dart';
 import 'services/storage/migration.dart';
 import 'services/storage/script_library.dart';
 
@@ -76,8 +77,8 @@ class EchoPromptApp extends ConsumerWidget {
     return MaterialApp(
       title: 'EchoPrompt',
       debugShowCheckedModeBanner: false,
-      theme: _theme(Brightness.light),
-      darkTheme: _theme(Brightness.dark),
+      theme: isDesktop ? _theme(Brightness.light) : mobileTheme(Brightness.light),
+      darkTheme: isDesktop ? _theme(Brightness.dark) : mobileTheme(Brightness.dark),
       themeMode: switch (appearance) {
         StudioAppearance.system => ThemeMode.system,
         StudioAppearance.light => ThemeMode.light,
