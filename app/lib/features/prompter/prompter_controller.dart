@@ -41,6 +41,7 @@ class PrompterState {
     this.preparing = false,
     this.status = '',
     this.finished = false,
+    this.lost = false,
     this.resetToken = 0,
   });
   final PromptReadingProgress progress;
@@ -48,6 +49,10 @@ class PrompterState {
   final bool preparing;
   final String status;
   final bool finished;
+
+  /// Voice mode: speech is being heard but has not matched the script for a
+  /// few seconds. Cleared as soon as the highlight moves.
+  final bool lost;
 
   /// Bumped by [PrompterController.begin] and restart; the text surface resets
   /// its scroll position when it changes.
@@ -59,6 +64,7 @@ class PrompterState {
     bool? preparing,
     String? status,
     bool? finished,
+    bool? lost,
     int? resetToken,
   }) => PrompterState(
     progress: progress ?? this.progress,
@@ -66,6 +72,7 @@ class PrompterState {
     preparing: preparing ?? this.preparing,
     status: status ?? this.status,
     finished: finished ?? this.finished,
+    lost: lost ?? this.lost,
     resetToken: resetToken ?? this.resetToken,
   );
 }
@@ -80,6 +87,8 @@ class PrompterController extends Notifier<PrompterState> {
   VoiceMatcher? _matcher;
   StreamSubscription<List<String>>? _voiceSub;
   Timer? _clockTimer;
+  Timer? _lostTimer;
+  static const _lostAfter = Duration(seconds: 4);
   ReferenceClock? _clock;
   List<TimedWord> _timed = const [];
   double _audioDuration = 0;
@@ -150,7 +159,8 @@ class PrompterController extends Notifier<PrompterState> {
         _clockTimer?.cancel();
         _clockTimer = null;
     }
-    state = state.copyWith(playing: false);
+    _clearLost();
+    state = state.copyWith(playing: false, lost: false);
   }
 
   Future<void> restart() async {
@@ -163,7 +173,9 @@ class PrompterController extends Notifier<PrompterState> {
   /// Jump to a tapped word (Voice/Audio: the matcher continues from there).
   void seekTo(int index) {
     if (index < 0 || index >= _wordCount) return;
+    _clearLost();
     state = state.copyWith(
+      lost: false,
       progress: PromptReadingProgress.synchronized(
         confirmed: index,
         predicted: index + 1 < _wordCount ? index + 1 : null,
@@ -214,14 +226,25 @@ class PrompterController extends Notifier<PrompterState> {
   void _onWords(List<String> words) {
     final current = state.progress.confirmedWordIndex;
     final next = _matcher!.follow(words, current);
-    if (next == current) return;
+    if (next == current) {
+      // Speech that keeps not matching means the reader is out of step.
+      if (words.isNotEmpty && !state.lost) _lostTimer ??= Timer(_lostAfter, () => state = state.copyWith(lost: true));
+      return;
+    }
+    _clearLost();
     state = state.copyWith(
       progress: PromptReadingProgress.synchronized(
         confirmed: next,
         predicted: next + 1 < _wordCount ? next + 1 : null,
       ),
+      lost: false,
       finished: next >= _wordCount - 1,
     );
+  }
+
+  void _clearLost() {
+    _lostTimer?.cancel();
+    _lostTimer = null;
   }
 
   // --- Recorded audio --------------------------------------------------------
@@ -279,6 +302,7 @@ class PrompterController extends Notifier<PrompterState> {
   }
 
   Future<void> _teardown() async {
+    _clearLost();
     _clockTimer?.cancel();
     _clockTimer = null;
     await _stopVoice();

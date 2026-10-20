@@ -7,6 +7,7 @@ import '../../core/settings/prompt_settings.dart';
 import '../../services/providers.dart';
 import 'prompt_surface.dart';
 import 'prompter_controller.dart';
+import 'tracking_status.dart';
 
 export 'prompt_surface.dart' show PromptLayoutStyle;
 
@@ -59,7 +60,17 @@ class PromptView extends ConsumerWidget {
                   Text('${(s.speed / 24).toStringAsFixed(2)}×', style: TextStyle(color: fg, fontSize: 12)),
                   IconButton(icon: const Icon(Icons.add), tooltip: 'Faster', onPressed: () => set((v) => v.copyWith(speed: math.min(72, v.speed + 3)))),
                 ],
-                Expanded(child: Text(pr.status, overflow: TextOverflow.ellipsis, style: TextStyle(color: fg.withValues(alpha: 0.7), fontSize: 12))),
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: TrackingPill(
+                      mode: s.mode,
+                      status: trackingStatusFor(s.mode, pr, ref.watch(audioPathProvider)),
+                      showMode: false,
+                      dense: true,
+                    ),
+                  ),
+                ),
                 PopupMenuButton<PromptControlMode>(
                   tooltip: 'Mode',
                   icon: Icon(Icons.tune, color: fg),

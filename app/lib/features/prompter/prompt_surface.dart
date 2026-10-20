@@ -34,6 +34,7 @@ class PromptSurface extends ConsumerStatefulWidget {
     this.onDragUpdate,
     this.onDragEnd,
     this.onWordTap,
+    this.onTapIntercept,
     this.previewWordIndex,
     this.scriptOverride,
     this.coveredByDesktopChrome = false,
@@ -48,6 +49,9 @@ class PromptSurface extends ConsumerStatefulWidget {
 
   /// Mobile: tap a word to jump there.
   final bool? onWordTap;
+
+  /// Mobile: called first on a tap; returning true consumes it (no word jump).
+  final bool Function()? onTapIntercept;
 
   /// Studio preview: a static rendering with this word on the reading line.
   /// It ignores the live session (no scrolling, highlighting or wakelock).
@@ -266,6 +270,7 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
       } else if (widget.onWordTap == true) {
         scroller = GestureDetector(
           onTapUp: (d) {
+            if (widget.onTapIntercept?.call() ?? false) return;
             final p = d.localPosition + Offset(-hPad, _offset - topPad);
             final i = layout.wordAt(p);
             if (i != null) ref.read(prompterProvider.notifier).seekTo(i);

@@ -1,13 +1,28 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/settings/prompt_settings.dart';
 import '../../services/providers.dart';
-import '../prompter/prompt_view.dart';
+import '../prompter/prompt_surface.dart';
 import '../prompter/prompter_controller.dart';
+import '../prompter/tracking_status.dart';
+import 'reading_settings.dart';
 
-/// Mobile "Read" mode: full-screen prompter without the camera (glass rigs,
-/// tablets on stands). Portrait or landscape; rotate/mirror live in settings.
+/// Window width from which the reader uses its roomy tablet layout.
+const _wideMinWidth = 720.0;
+
+/// Longest line length that stays comfortable to read on a big window.
+const _maxTextWidth = 980.0;
+
+/// Mobile "Read" mode: the script, full bleed on black, with controls that
+/// step aside while you read. Playback sits in a floating dock at the bottom;
+/// whether the prompter is following you is always visible at the top, even
+/// when the rest of the chrome has faded. Tap the text to bring controls back.
+/// Portrait or landscape; rotate/mirror live in the settings.
 class ReadScreen extends ConsumerStatefulWidget {
   const ReadScreen({super.key});
   @override
@@ -15,6 +30,11 @@ class ReadScreen extends ConsumerStatefulWidget {
 }
 
 class _ReadScreenState extends ConsumerState<ReadScreen> {
+  static const _hideAfter = Duration(seconds: 4);
+
+  bool _chrome = true;
+  Timer? _hideTimer;
+
   @override
   void initState() {
     super.initState();
@@ -30,8 +50,43 @@ class _ReadScreenState extends ConsumerState<ReadScreen> {
 
   @override
   void dispose() {
+    _hideTimer?.cancel();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
+  }
+
+  /// Controls stay up while paused and fade a few seconds after playback starts.
+  void _syncChrome(bool playing) {
+    _hideTimer?.cancel();
+    if (!playing) {
+      setState(() => _chrome = true);
+      return;
+    }
+    _hideTimer = Timer(_hideAfter, () {
+      if (mounted) setState(() => _chrome = false);
+    });
+  }
+
+  /// A tap while the controls are hidden only brings them back.
+  bool _onTextTap() {
+    final playing = ref.read(prompterProvider).playing;
+    if (_chrome) {
+      _syncChrome(playing);
+      return false;
+    }
+    setState(() => _chrome = true);
+    _syncChrome(playing);
+    return true;
+  }
+
+  void _close() {
+    ref.read(prompterProvider.notifier).pause();
+    Navigator.of(context).pop();
+  }
+
+  void _togglePlay() {
+    HapticFeedback.selectionClick();
+    ref.read(prompterProvider.notifier).togglePlay();
   }
 
   @override
@@ -45,29 +100,315 @@ class _ReadScreenState extends ConsumerState<ReadScreen> {
         audioPath: ref.read(audioPathProvider),
       );
     });
-    final set = ref.read(settingsProvider.notifier).update;
-    final s = ref.watch(settingsProvider);
+    ref.listen(prompterProvider.select((p) => p.playing), (_, playing) => _syncChrome(playing));
+
     return Scaffold(
-      body: SafeArea(
-        child: PromptView(
-                    backgroundOpacity: 1,
-          onClose: () {
-            ref.read(prompterProvider.notifier).pause();
-            Navigator.of(context).pop();
-          },
-          trailing: [
-            IconButton(
-              tooltip: 'Mirror',
-              icon: Icon(Icons.flip, color: s.mirror ? Colors.orange : null),
-              onPressed: () => set((v) => v.copyWith(mirror: !v.mirror)),
-            ),
-            IconButton(
-              tooltip: 'Rotate 180°',
-              icon: Icon(Icons.screen_rotation, color: s.rotated ? Colors.orange : null),
-              onPressed: () => set((v) => v.copyWith(rotated: !v.rotated)),
-            ),
-          ],
+      backgroundColor: promptBackground,
+      body: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.space): _togglePlay,
+          const SingleActivator(LogicalKeyboardKey.escape): _close,
+        },
+        child: Focus(
+          autofocus: true,
+          child: LayoutBuilder(builder: (context, c) {
+            final wide = c.maxWidth >= _wideMinWidth;
+            final pad = MediaQuery.viewPaddingOf(context);
+            return Stack(children: [
+              Positioned.fill(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: _maxTextWidth),
+                    child: PromptSurface(onWordTap: true, onTapIntercept: _onTextTap),
+                  ),
+                ),
+              ),
+              Positioned(left: 0, right: 0, bottom: 0, child: _ProgressLine()),
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: _TopBar(visible: _chrome, wide: wide, topInset: pad.top, onClose: _close),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: _Dock(visible: _chrome, wide: wide, bottomInset: pad.bottom, onTogglePlay: _togglePlay),
+              ),
+            ]);
+          }),
         ),
+      ),
+    );
+  }
+}
+
+// --- Top bar -----------------------------------------------------------------------
+
+class _TopBar extends ConsumerWidget {
+  const _TopBar({required this.visible, required this.wide, required this.topInset, required this.onClose});
+
+  final bool visible;
+  final bool wide;
+  final double topInset;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final mode = ref.watch(settingsProvider.select((s) => s.mode));
+    final pr = ref.watch(prompterProvider);
+    final audio = ref.watch(audioPathProvider);
+    final status = trackingStatusFor(mode, pr, audio);
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final duration = reduceMotion ? Duration.zero : const Duration(milliseconds: 220);
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(12, math.max(topInset, 8) + 4, 12, 0),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _FadeIn(
+          visible: visible,
+          duration: duration,
+          child: _RoundButton(icon: Icons.close, tooltip: 'Close', onPressed: onClose),
+        ),
+        Expanded(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: TrackingPill(mode: mode, status: status, showMode: visible || wide),
+            ),
+            if (status.detail != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 360),
+                  child: Text(
+                    status.detail!,
+                    textAlign: TextAlign.center,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: promptText.withValues(alpha: 0.8), fontSize: 13),
+                  ),
+                ),
+              ),
+          ]),
+        ),
+        _FadeIn(
+          visible: visible,
+          duration: duration,
+          child: _RoundButton(
+            icon: Icons.tune,
+            tooltip: 'Reading settings',
+            onPressed: () => showReadingSettings(context),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+// --- Dock ----------------------------------------------------------------------------
+
+class _Dock extends ConsumerWidget {
+  const _Dock({required this.visible, required this.wide, required this.bottomInset, required this.onTogglePlay});
+
+  final bool visible;
+  final bool wide;
+  final double bottomInset;
+  final VoidCallback onTogglePlay;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = ref.watch(settingsProvider);
+    final pr = ref.watch(prompterProvider);
+    final c = ref.read(prompterProvider.notifier);
+    final set = ref.read(settingsProvider.notifier).update;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final playSize = wide ? 76.0 : 68.0;
+
+    final stepper = s.mode == PromptControlMode.normal
+        ? _Stepper(
+            label: '${(s.speed / 24).toStringAsFixed(1)}×',
+            caption: 'Speed',
+            onMinus: () => set((v) => v.copyWith(speed: math.max(6, v.speed - 3))),
+            onPlus: () => set((v) => v.copyWith(speed: math.min(72, v.speed + 3))),
+            minusTip: 'Slower',
+            plusTip: 'Faster',
+          )
+        : _Stepper(
+            label: '${s.fontSize.round()}',
+            caption: 'Text size',
+            onMinus: () => set((v) => v.copyWith(fontSize: v.fontSize - 3)),
+            onPlus: () => set((v) => v.copyWith(fontSize: v.fontSize + 3)),
+            minusTip: 'Smaller text',
+            plusTip: 'Larger text',
+          );
+
+    return _FadeIn(
+      visible: visible,
+      duration: reduceMotion ? Duration.zero : const Duration(milliseconds: 220),
+      slide: true,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(12, 0, 12, math.max(bottomInset, 8) + 8),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: wide ? 560 : 440),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xFF1C1B19).withValues(alpha: 0.94),
+                borderRadius: BorderRadius.circular(36),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  _RoundButton(icon: Icons.replay, tooltip: 'Restart', onPressed: c.restart),
+                  _PlayButton(size: playSize, playing: pr.playing, busy: pr.preparing, onPressed: onTogglePlay),
+                  stepper,
+                ]),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PlayButton extends StatelessWidget {
+  const _PlayButton({required this.size, required this.playing, required this.busy, required this.onPressed});
+
+  final double size;
+  final bool playing;
+  final bool busy;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: playing ? 'Pause' : 'Play',
+      excludeSemantics: true,
+      child: SizedBox.square(
+        dimension: size,
+        child: Material(
+          color: busy ? Colors.white24 : const Color(0xFFFFA24A),
+          shape: const CircleBorder(),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: busy ? null : onPressed,
+            child: Center(
+              child: busy
+                  ? const SizedBox.square(dimension: 26, child: CircularProgressIndicator(strokeWidth: 3, color: promptText))
+                  : Icon(playing ? Icons.pause_rounded : Icons.play_arrow_rounded, size: size * 0.6, color: const Color(0xFF1B0F00)),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _Stepper extends StatelessWidget {
+  const _Stepper({
+    required this.label,
+    required this.caption,
+    required this.onMinus,
+    required this.onPlus,
+    required this.minusTip,
+    required this.plusTip,
+  });
+
+  final String label;
+  final String caption;
+  final VoidCallback onMinus;
+  final VoidCallback onPlus;
+  final String minusTip;
+  final String plusTip;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      _RoundButton(icon: Icons.remove, tooltip: minusTip, onPressed: onMinus, filled: false),
+      ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 44),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(label, style: const TextStyle(color: promptText, fontSize: 16, fontWeight: FontWeight.w700)),
+          Text(caption, style: TextStyle(color: promptText.withValues(alpha: 0.6), fontSize: 10)),
+        ]),
+      ),
+      _RoundButton(icon: Icons.add, tooltip: plusTip, onPressed: onPlus, filled: false),
+    ]);
+  }
+}
+
+// --- Small pieces ----------------------------------------------------------------
+
+class _RoundButton extends StatelessWidget {
+  const _RoundButton({required this.icon, required this.tooltip, required this.onPressed, this.filled = true});
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+  final bool filled;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      icon: Icon(icon, color: promptText),
+      style: IconButton.styleFrom(
+        minimumSize: const Size(48, 48),
+        backgroundColor: filled ? Colors.white.withValues(alpha: 0.12) : null,
+      ),
+    );
+  }
+}
+
+/// Fades (and optionally slides down) its child away; hidden children stop
+/// receiving touches.
+class _FadeIn extends StatelessWidget {
+  const _FadeIn({required this.visible, required this.duration, required this.child, this.slide = false});
+
+  final bool visible;
+  final Duration duration;
+  final Widget child;
+  final bool slide;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      ignoring: !visible,
+      child: ExcludeSemantics(
+        excluding: !visible,
+        child: AnimatedSlide(
+          duration: duration,
+          curve: Curves.easeOutCubic,
+          offset: slide && !visible ? const Offset(0, 0.4) : Offset.zero,
+          child: AnimatedOpacity(duration: duration, opacity: visible ? 1 : 0, child: child),
+        ),
+      ),
+    );
+  }
+}
+
+/// A hairline of reading progress along the bottom edge.
+class _ProgressLine extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final mode = ref.watch(settingsProvider.select((s) => s.mode));
+    final tracked = ref.watch(prompterProvider.select((p) => p.progress.confirmedWordIndex));
+    final scrolled = ref.watch(readingWordProvider);
+    final words = ref.read(prompterProvider.notifier).wordCount;
+    final index = mode == PromptControlMode.normal ? scrolled : math.max(tracked, 0);
+    final value = words <= 1 ? 0.0 : (index / (words - 1)).clamp(0.0, 1.0).toDouble();
+    return ExcludeSemantics(
+      child: LinearProgressIndicator(
+        value: value,
+        minHeight: 3,
+        backgroundColor: Colors.white.withValues(alpha: 0.08),
+        color: const Color(0xFFFFA24A).withValues(alpha: 0.8),
       ),
     );
   }
