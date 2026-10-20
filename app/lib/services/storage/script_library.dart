@@ -72,8 +72,11 @@ class ScriptLibrary {
         .join(' ');
     final stem = base.isEmpty ? 'Untitled script' : base;
     final used = {for (final h in history) if (h.id != s.id) h.fileName};
+    // Scripts past the history limit leave the list but keep their files, so a
+    // name must also be free on disk. Runs once per new script, not per save.
+    bool taken(String n) => used.contains(n) || File(p.join(directory.path, n)).existsSync();
     var name = '$stem.txt';
-    for (var i = 2; used.contains(name); i++) {
+    for (var i = 2; taken(name); i++) {
       name = '$stem $i.txt';
     }
     return name;
