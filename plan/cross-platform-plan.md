@@ -402,6 +402,7 @@ You test every platform, every mode, and match against the POC:
 4. **License & terms:** replace current `LICENSE` with "All rights reserved", add `TERMS.md` (commercial use allowed), and `THIRD_PARTY_NOTICES`.
 5. **Privacy policy:** on-device speech, no script upload, analytics/optional account/backend disclosures. Host on the web site (or standalone, your choice).
 6. Create store listings (text, screenshots, privacy labels, data safety).
+7. **Audio mode soundtrack (native):** write the chosen audio file as the video's own audio track in `packages/echoprompt_camera` (iOS `AVAssetWriter`, Android `MediaCodec`/`MediaMuxer`), replacing the interim Speaker route so the recorded sound is clean regardless of the room (§10.2).
 
 ### Phase 4: Polish + Release (≈2–3 weeks)
 
@@ -612,6 +613,7 @@ Attribution from the web site to the app store uses UTM-tagged store links (App 
 - **Prompter modes while recording:**
   - **Normal:** timer scrolling starts when recording starts, after the countdown.
   - **Voice:** follows the presenter's speech, using the same mic stream that records the video (see Technical design).
+    - If speech is heard but does not match the script for ~4 s, the status shows **Lost your place**. Repeating the last phrase recovers; tapping a word also moves the highlight there. The matcher never skips ahead on its own.
   - **Recorded audio:** see the next section.
 
 #### Recorded-audio mode while recording (resolves the playback-vs-microphone conflict)
@@ -627,7 +629,9 @@ The conflict: if the reference audio plays from the phone's speaker, the microph
 
 - **Preparation:** the reference file is transcribed on-device **before** recording, with a progress bar. The word timestamps are cached against the file's hash, so the next take starts instantly.
 - **Sync:** playback, or the silent timeline, starts on the **first recorded video frame** after the countdown. Drift is corrected against the media clock, the same `pacingCeiling` logic as the POC.
-- **Later option (Phase 3):** "Use reference audio as the video's soundtrack" (lip-sync / voice-over videos). Because we own the encoder pipeline, the file can be written as the video's audio track instead of the mic.
+- **Product decision (updated):** in Audio mode the recorded video **must contain the audio file's sound**, and the prompter text doubles as a look-ahead cue (the current line plus the next 1-2 lines) so the presenter can act early, e.g. turn the camera toward the river before the narration reaches it. The Studio's Record button is the primary action for Voice and Audio; Normal uses Read (no camera or microphone). See `plan/mobile-ux-plan.md`.
+  - **Interim (implemented):** Audio mode defaults to the **Speaker** route, so the microphone records the playback into the video. Quality depends on speaker volume and room acoustics.
+  - **Target (not started; scheduled in Phase 3, item 7):** write the audio file as the video's own audio track in the native encoder (`packages/echoprompt_camera`, iOS `AVAssetWriter` and Android `MediaCodec`/`MediaMuxer`), so the soundtrack is clean regardless of the room. Headphones then work for the presenter without affecting the video.
 - **Saving:**
   - iOS: Photos (add-only permission).
   - Android: `MediaStore` (DCIM/EchoPrompt).
