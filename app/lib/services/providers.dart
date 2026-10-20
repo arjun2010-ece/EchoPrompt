@@ -175,6 +175,17 @@ class StudioNotifier extends Notifier<StudioState> {
     );
   }
 
+  /// Opens the built-in demo script; like the welcome text it is never saved.
+  void loadDemo() {
+    flush();
+    _currentId = null;
+    state = state.copyWith(
+      script: welcome,
+      scriptRevision: state.scriptRevision + 1,
+      resumeWordIndex: () => null,
+    );
+  }
+
   /// Starts an empty script; it is saved on the first Start.
   void newScript() {
     flush();
@@ -203,6 +214,12 @@ class StudioNotifier extends Notifier<StudioState> {
     final history = await ref.read(libraryProvider).delete(state.history, s);
     if (s.id == _currentId) _currentId = null;
     state = state.copyWith(history: history);
+  }
+
+  Future<void> deleteMany(List<SavedScript> scripts) async {
+    for (final s in scripts) {
+      await delete(s);
+    }
   }
 
   /// Leaves the prompter (desktop restores the Studio window). [wordIndex] is

@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/script/reading_time.dart';
-import '../../core/script/saved_script.dart';
 import '../../core/settings/labels.dart';
 import '../../core/settings/prompt_settings.dart';
 import '../../services/providers.dart';
@@ -14,6 +13,7 @@ import '../../ui/position_picker.dart';
 import '../../ui/prompt_text_controls.dart';
 import '../settings/preferences_screen.dart';
 import 'prompt_preview.dart';
+import 'script_list.dart';
 
 const _positionTipKey = 'EchoPrompt.positionTip.dismissed.v1';
 
@@ -232,7 +232,6 @@ class _ScriptList extends ConsumerWidget {
     // together with scriptRevision, so watch that to refresh the selection.
     ref.watch(studioProvider.select((s) => s.scriptRevision));
     final notifier = ref.read(studioProvider.notifier);
-    final currentId = notifier.currentId;
     final scheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -261,116 +260,43 @@ class _ScriptList extends ConsumerWidget {
           ),
         ),
         Expanded(
-          child: history.isEmpty
-              ? Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(
-                    'Scripts you present are saved here automatically.',
-                    style: Theme.of(context).textTheme.bodySmall
-                        ?.copyWith(color: scheme.onSurfaceVariant),
-                  ),
-                )
-              : ListView(
-                  children: [
-                    for (final s in history)
-                      _ScriptTile(
-                        script: s,
-                        selected: s.id == currentId,
-                        onTap: () {
-                          notifier.load(s);
-                          onPicked();
-                        },
-                      ),
-                  ],
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: ScriptListBody(
+              history: history,
+              dense: true,
+              onOpen: (s) {
+                notifier.load(s);
+                onPicked();
+              },
+              onOpenDemo: () {
+                notifier.loadDemo();
+                onPicked();
+              },
+              menuItems: () => [
+                const PopupMenuItem(value: 'duplicate', child: Text('Duplicate')),
+                PopupMenuItem(
+                  value: 'reveal',
+                  child: Text(isMacOS ? 'Show in Finder' : 'Show in Explorer'),
                 ),
+                const PopupMenuDivider(),
+                const PopupMenuItem(value: 'delete', child: Text('Delete…')),
+              ],
+              onMenu: (s, action) {
+                switch (action) {
+                  case 'duplicate':
+                    notifier.duplicate(s);
+                  case 'reveal':
+                    ScriptIO.reveal(ref.read(libraryProvider).directory);
+                  case 'delete':
+                    confirmDeleteScripts(context, ref, [s]);
+                }
+              },
+            ),
+          ),
         ),
+        ScriptSelectionBar(history: history),
       ],
-    );
-  }
-}
-
-class _ScriptTile extends ConsumerWidget {
-  const _ScriptTile({
-    required this.script,
-    required this.selected,
-    required this.onTap,
-  });
-  final SavedScript script;
-  final bool selected;
-  final VoidCallback onTap;
-
-  Future<void> _delete(BuildContext context, WidgetRef ref) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Delete this script?'),
-        content: Text(
-          '“${script.title}” will be removed from your scripts folder.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(c, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(c, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (ok == true) await ref.read(studioProvider.notifier).delete(script);
-  }
-
-  void _act(BuildContext context, WidgetRef ref, String action) {
-    switch (action) {
-      case 'duplicate':
-        ref.read(studioProvider.notifier).duplicate(script);
-      case 'reveal':
-        ScriptIO.reveal(ref.read(libraryProvider).directory);
-      case 'delete':
-        _delete(context, ref);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final scheme = Theme.of(context).colorScheme;
-    final revealLabel = isMacOS ? 'Show in Finder' : 'Show in Explorer';
-    List<PopupMenuEntry<String>> items() => [
-      const PopupMenuItem(value: 'duplicate', child: Text('Duplicate')),
-      PopupMenuItem(value: 'reveal', child: Text(revealLabel)),
-      const PopupMenuDivider(),
-      const PopupMenuItem(value: 'delete', child: Text('Delete…')),
-    ];
-    return GestureDetector(
-      onSecondaryTapUp: (d) async {
-        final overlay =
-            Overlay.of(context).context.findRenderObject()! as RenderBox;
-        final choice = await showMenu<String>(
-          context: context,
-          position: RelativeRect.fromRect(
-            d.globalPosition & const Size(1, 1),
-            Offset.zero & overlay.size,
-          ),
-          items: items(),
-        );
-        if (choice != null && context.mounted) _act(context, ref, choice);
-      },
-      child: ListTile(
-        dense: true,
-        selected: selected,
-        selectedTileColor: scheme.primaryContainer.withValues(alpha: 0.45),
-        title: Text(script.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(friendlyDate(script.savedAt)),
-        onTap: onTap,
-        trailing: PopupMenuButton<String>(
-          tooltip: 'Script actions',
-          icon: const Icon(Icons.more_horiz, size: 18),
-          onSelected: (a) => _act(context, ref, a),
-          itemBuilder: (_) => items(),
-        ),
-      ),
     );
   }
 }
