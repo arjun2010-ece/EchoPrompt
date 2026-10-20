@@ -170,6 +170,10 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
         key: _scaffold,
         appBar: AppBar(
           title: const Text('EchoPrompt'),
+          // Nothing scrolls under this bar; ignore scroll notifications so the
+          // script list relaying out on selection can't flash the header.
+          notificationPredicate: (_) => false,
+          scrolledUnderElevation: 0,
           leading: threeColumns
               ? null
               : IconButton(
@@ -224,6 +228,9 @@ class _ScriptList extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final history = ref.watch(studioProvider.select((s) => s.history));
+    // currentId is not part of the state; load/new/duplicate/import change it
+    // together with scriptRevision, so watch that to refresh the selection.
+    ref.watch(studioProvider.select((s) => s.scriptRevision));
     final notifier = ref.read(studioProvider.notifier);
     final currentId = notifier.currentId;
     final scheme = Theme.of(context).colorScheme;
