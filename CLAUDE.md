@@ -35,6 +35,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   and make sure it reflects the update, so the same feature does not need to be
   reworked repeatedly.
 
+- Think through the user experience before implementing any UI change. Do not
+  offer redundant or conflicting actions on a screen: if a control hands the user
+  off to another screen that has its own version of an action (for example, a
+  Record button that opens a screen with its own play and camera controls), do
+  not also show that action on the current screen. Every control must make sense
+  for what the user can do next from that screen.
+
 ## Efficient investigation and validation
 
 - Start with targeted searches and read only the relevant code sections.

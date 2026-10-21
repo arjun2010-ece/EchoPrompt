@@ -96,7 +96,14 @@ class _ReadScreenState extends ConsumerState<ReadScreen> {
     );
   }
 
+  void _record() {
+    ref.read(prompterProvider.notifier).pause();
+    Navigator.of(context).pop(true);
+  }
+
   void _togglePlay() {
+    // Voice and Audio play from the Record screen, not here.
+    if (ref.read(settingsProvider).mode != PromptControlMode.normal) return;
     HapticFeedback.selectionClick();
     ref.read(prompterProvider.notifier).togglePlay();
   }
@@ -146,7 +153,7 @@ class _ReadScreenState extends ConsumerState<ReadScreen> {
                 left: 0,
                 right: 0,
                 bottom: 0,
-                child: _Dock(visible: _chrome, wide: wide, bottomInset: pad.bottom, onTogglePlay: _togglePlay, onEdit: _edit),
+                child: _Dock(visible: _chrome, wide: wide, bottomInset: pad.bottom, onTogglePlay: _togglePlay, onEdit: _edit, onRecord: _record),
               ),
             ]);
           }),
@@ -228,6 +235,7 @@ class _Dock extends ConsumerWidget {
     required this.bottomInset,
     required this.onTogglePlay,
     required this.onEdit,
+    required this.onRecord,
   });
 
   final bool visible;
@@ -235,6 +243,7 @@ class _Dock extends ConsumerWidget {
   final double bottomInset;
   final VoidCallback onTogglePlay;
   final VoidCallback onEdit;
+  final VoidCallback onRecord;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -243,7 +252,15 @@ class _Dock extends ConsumerWidget {
     final c = ref.read(prompterProvider.notifier);
     final set = ref.read(settingsProvider.notifier).update;
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final audio = ref.watch(audioPathProvider);
     final playSize = wide ? 76.0 : 68.0;
+    final normal = s.mode == PromptControlMode.normal;
+    final leftActions = Row(mainAxisSize: MainAxisSize.min, children: [
+      _RoundButton(icon: Icons.replay, tooltip: 'Restart', onPressed: c.restart),
+      const SizedBox(width: 8),
+      _RoundButton(icon: Icons.edit_outlined, tooltip: 'Edit script', onPressed: onEdit),
+    ]);
+    final recordBlocked = s.mode == PromptControlMode.recordedAudio && audio == null;
 
     final stepper = s.mode == PromptControlMode.normal
         ? _Stepper(
@@ -280,20 +297,28 @@ class _Dock extends ConsumerWidget {
               ),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                // Equal side slots keep the play button centred whatever the side widths.
-                child: Row(children: [
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        _RoundButton(icon: Icons.replay, tooltip: 'Restart', onPressed: c.restart),
-                        const SizedBox(width: 8),
-                        _RoundButton(icon: Icons.edit_outlined, tooltip: 'Edit script', onPressed: onEdit),
-                      ]),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  if (!normal) ...[
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: recordBlocked ? null : onRecord,
+                        icon: const Icon(Icons.videocam),
+                        label: const Text('Record'),
+                      ),
                     ),
-                  ),
-                  _PlayButton(size: playSize, playing: pr.playing, busy: pr.preparing, onPressed: onTogglePlay),
-                  Expanded(child: Align(alignment: Alignment.centerRight, child: stepper)),
+                    const SizedBox(height: 10),
+                  ],
+                  if (normal)
+                    // Equal side slots keep the play button centred whatever the side widths.
+                    Row(children: [
+                      Expanded(child: Align(alignment: Alignment.centerLeft, child: leftActions)),
+                      _PlayButton(size: playSize, playing: pr.playing, busy: pr.preparing, onPressed: onTogglePlay),
+                      Expanded(child: Align(alignment: Alignment.centerRight, child: stepper)),
+                    ])
+                  else
+                    // Recording has its own play control, so this screen only offers Record.
+                    Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [leftActions, stepper]),
                 ]),
               ),
             ),

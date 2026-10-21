@@ -52,13 +52,26 @@ void _exportScript(WidgetRef ref) {
 }
 
 Future<void> _present(BuildContext context, WidgetRef ref, {required bool record}) async {
-  await ref.read(studioProvider.notifier).start();
+  final studio = ref.read(studioProvider.notifier);
+  await studio.start();
   if (!context.mounted) return;
-  await Navigator.of(context).push(MaterialPageRoute<void>(
-    builder: (_) => record ? const RecordScreen() : const ReadScreen(),
-    fullscreenDialog: true,
-  ));
-  ref.read(studioProvider.notifier).stopPresenting();
+  // The reader can hand over to recording once the mode was switched to Voice or Audio there.
+  var toRecord = record;
+  if (!record) {
+    toRecord = await Navigator.of(context).push<bool>(MaterialPageRoute<bool>(
+          builder: (_) => const ReadScreen(),
+          fullscreenDialog: true,
+        )) ??
+        false;
+    if (toRecord) {
+      await studio.start();
+      if (!context.mounted) return;
+    }
+  }
+  if (toRecord && context.mounted) {
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const RecordScreen(), fullscreenDialog: true));
+  }
+  studio.stopPresenting();
 }
 
 /// What the primary button will do in each mode.
