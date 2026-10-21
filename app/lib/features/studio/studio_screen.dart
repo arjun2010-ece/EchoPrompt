@@ -140,7 +140,7 @@ class _LibraryPage extends ConsumerWidget {
                 },
                 onRead: (s) {
                   notifier.load(s);
-                  _present(context, ref, record: false);
+                  _openEditor(context);
                 },
                 menuItems: () => const [PopupMenuItem(value: 'delete', child: Text('Delete'))],
                 onMenu: (s, _) => confirmDeleteScripts(context, ref, [s]),
@@ -298,7 +298,6 @@ class _SplitStudioState extends ConsumerState<_SplitStudio> {
                     onRead: (s) {
                       notifier.load(s);
                       _edit();
-                      _present(context, ref, record: false);
                     },
                     menuItems: () => const [PopupMenuItem(value: 'delete', child: Text('Delete'))],
                     onMenu: (s, _) async {

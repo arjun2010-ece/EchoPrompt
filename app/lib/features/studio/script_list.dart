@@ -310,7 +310,7 @@ class _ScriptRow extends StatelessWidget {
                     ),
                   ),
                   if (onRead != null)
-                    IconButton.filledTonal(tooltip: 'Read "$title"', icon: const Icon(Icons.play_arrow_rounded), onPressed: onRead),
+                    IconButton.filledTonal(tooltip: 'Start "$title"', icon: const Icon(Icons.play_arrow_rounded), onPressed: onRead),
                   if (menuItems != null)
                     PopupMenuButton<String>(
                       tooltip: 'More',
