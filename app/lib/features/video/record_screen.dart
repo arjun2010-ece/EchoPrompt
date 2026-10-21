@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:echoprompt_camera/echoprompt_camera.dart';
 import 'package:flutter/material.dart';
@@ -28,6 +29,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   CameraPreviewInfo? _preview;
   String? _error;
   bool _recording = false;
+  bool _paused = false;
   int? _countdown;
   bool _useCountdown = true;
   int _recordings = 0;
@@ -44,6 +46,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       ref.read(prefsProvider).setDouble('EchoPrompt.overlay.${landscape ? 'l' : 'p'}', v);
   final _dragFractions = <bool, double>{};
   static const _barHeight = 56.0;
+  static const _recordButtonSize = 40.0;
 
   @override
   void initState() {
@@ -108,6 +111,50 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     if (mounted) setState(() => _preview = p);
   }
 
+  void _startTimer() =>
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) => setState(() => _elapsed += const Duration(seconds: 1)));
+
+  Future<void> _togglePause() async {
+    final prompter = ref.read(prompterProvider.notifier);
+    if (_paused) {
+      await EchoPromptCamera.resumeRecording();
+      _startTimer();
+      setState(() => _paused = false);
+      await prompter.play();
+    } else {
+      _timer?.cancel();
+      await EchoPromptCamera.pauseRecording();
+      setState(() => _paused = true);
+      await prompter.pause();
+    }
+  }
+
+  /// Close while recording: save the take, or discard it and go back to the scripts.
+  Future<void> _confirmClose() async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Finish this recording?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, 'exit'), child: const Text('Exit recording')),
+          TextButton(onPressed: () => Navigator.pop(ctx, 'save'), child: const Text('Save')),
+        ],
+      ),
+    );
+    if (choice == null || !_recording || !mounted) return;
+    await ref.read(prompterProvider.notifier).pause();
+    final r = await EchoPromptCamera.stopRecording();
+    if (choice == 'save') {
+      await _onStopped(r, 'user');
+      return;
+    }
+    await _onStopped(null, 'discarded');
+    try {
+      await File(r.path).delete();
+    } catch (_) {}
+    if (mounted) Navigator.of(context).pop();
+  }
+
   Future<void> _toggleRecord(bool landscape) async {
     final prompter = ref.read(prompterProvider.notifier);
     final analytics = ref.read(analyticsProvider);
@@ -142,7 +189,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       _recording = true;
       _elapsed = Duration.zero;
     });
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) => setState(() => _elapsed += const Duration(seconds: 1)));
+    _startTimer();
     if (mode == PromptControlMode.voice) _micStart = DateTime.now();
     // Playback / scrolling starts on the first recorded frame (after the
     // countdown); Audio mode's clock starts here too.
@@ -158,7 +205,10 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       _micStart = null;
     }
     if (!mounted) return;
-    setState(() => _recording = false);
+    setState(() {
+      _recording = false;
+      _paused = false;
+    });
     if (r == null) return;
     _recordings++;
     a.log('video_record_stop', {'duration_s': r.duration.inSeconds, 'reason': r.reason});
@@ -249,7 +299,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         if (_recording)
           Positioned(
             right: 12,
-            bottom: media.padding.bottom + 12 + _barHeight + 12 + 72 + 12,
+            bottom: media.padding.bottom + 12 + _barHeight + 12 + _recordButtonSize + 12,
             child: Chip(avatar: const Icon(Icons.fiber_manual_record, color: Colors.red, size: 14), label: Text(_fmt(_elapsed))),
           ),
         Positioned(
@@ -276,10 +326,10 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
             GestureDetector(
               onTap: p == null || _countdown != null ? null : () => _toggleRecord(landscape),
               child: Container(
-                width: 72,
-                height: 72,
+                width: _recordButtonSize,
+                height: _recordButtonSize,
                 decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 4)),
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.all(6),
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     color: Colors.red,
@@ -290,7 +340,13 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
             ),
             Expanded(
               child: Center(
-                child: PopupMenuButton<String>(
+                child: _recording
+                    ? IconButton.filledTonal(
+                        tooltip: _paused ? 'Resume recording' : 'Pause recording',
+                        icon: Icon(_paused ? Icons.play_arrow : Icons.pause),
+                        onPressed: _togglePause,
+                      )
+                    : PopupMenuButton<String>(
               icon: const Icon(Icons.more_horiz, color: Colors.white),
               onSelected: (v) => setState(() {
                 switch (v) {
@@ -328,7 +384,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
             child: PromptControlBar(
               compact: false,
               color: Colors.black.withValues(alpha: 0.6),
-              onClose: _recording ? null : () => Navigator.of(context).pop(),
+              onClose: _recording ? _confirmClose : () => Navigator.of(context).pop(),
             ),
           ),
         ),

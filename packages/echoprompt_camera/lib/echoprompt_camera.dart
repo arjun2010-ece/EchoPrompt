@@ -100,6 +100,10 @@ class EchoPromptCamera {
     'hevc': hevc,
   });
 
+  /// Pauses/resumes the take without ending the file.
+  static Future<void> pauseRecording() => _channel.invokeMethod('pauseRecording');
+  static Future<void> resumeRecording() => _channel.invokeMethod('resumeRecording');
+
   static Future<RecordingResult> stopRecording({String reason = 'user'}) async {
     final m = (await _channel.invokeMapMethod<String, Object?>(
       'stopRecording',

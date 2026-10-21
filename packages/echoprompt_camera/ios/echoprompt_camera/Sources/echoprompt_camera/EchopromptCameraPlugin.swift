@@ -32,6 +32,12 @@ public class EchopromptCameraPlugin: NSObject, FlutterPlugin, FlutterTexture, Fl
     private var writerStarted = false
     private var startTime: CMTime = .invalid
     private var lastTime: CMTime = .zero
+    // Pause support: samples are dropped while paused and later ones are
+    // shifted back by `pausedOffset` so the file has no gap.
+    private var paused = false
+    private var resuming = false
+    private var pausedOffset: CMTime = .zero
+    private var lastRawVideo: CMTime = .zero
     private var outputURL: URL?
     private var landscapeRecording = false
     private var recordingHeight = 1080
@@ -83,6 +89,8 @@ public class EchopromptCameraPlugin: NSObject, FlutterPlugin, FlutterTexture, Fl
             useHEVC = a["hevc"] as? Bool ?? false
             queue.async { do { try self.beginWriter(); DispatchQueue.main.async { result(nil) } }
                 catch { DispatchQueue.main.async { result(FlutterError(code: "record", message: "\(error)", details: nil)) } } }
+        case "pauseRecording": queue.async { if self.writer != nil { self.paused = true; self.resuming = false }; DispatchQueue.main.async { result(nil) } }
+        case "resumeRecording": queue.async { if self.paused { self.paused = false; self.resuming = true }; DispatchQueue.main.async { result(nil) } }
         case "stopRecording": finishRecording(reason: a["reason"] as? String ?? "user", result: result)
         case "saveToGallery": saveToGallery(a["path"] as? String ?? "", result: result)
         case "headphonesConnected":
@@ -273,21 +281,41 @@ public class EchopromptCameraPlugin: NSObject, FlutterPlugin, FlutterTexture, Fl
         w.add(v); w.add(a)
         writer = w; vInput = v; aInput = a; outputURL = url
         writerStarted = false; startTime = .invalid; lastTime = .zero
+        paused = false; resuming = false; pausedOffset = .zero; lastRawVideo = .zero
         w.startWriting()
     }
 
     private func write(_ sb: CMSampleBuffer, video: Bool) {
-        guard let w = writer, w.status == .writing else { return }
-        let pts = CMSampleBufferGetPresentationTimeStamp(sb)
+        guard let w = writer, w.status == .writing, !paused else { return }
+        var pts = CMSampleBufferGetPresentationTimeStamp(sb)
         if !writerStarted {
             // Start the file on the first video frame so audio and video align.
             guard video else { return }
             w.startSession(atSourceTime: pts); startTime = pts; writerStarted = true
         }
+        if resuming {
+            // Resync on the first video frame after a pause; audio waits for it.
+            guard video else { return }
+            let gap = CMTimeSubtract(pts, lastRawVideo)
+            pausedOffset = CMTimeAdd(pausedOffset, CMTimeSubtract(gap, CMTime(value: 1, timescale: 30)))
+            resuming = false
+        }
         let input = video ? vInput : aInput
         if input?.isReadyForMoreMediaData == true {
-            input?.append(sb)
-            if video { lastTime = pts }
+            var out = sb
+            if pausedOffset != .zero {
+                var timing = CMSampleTimingInfo(
+                    duration: CMSampleBufferGetDuration(sb),
+                    presentationTimeStamp: CMTimeSubtract(pts, pausedOffset),
+                    decodeTimeStamp: .invalid)
+                var copy: CMSampleBuffer?
+                guard CMSampleBufferCreateCopyWithNewTiming(allocator: nil, sampleBuffer: sb, sampleTimingEntryCount: 1,
+                                                            sampleTimingArray: &timing, sampleBufferOut: &copy) == noErr,
+                      let c = copy else { return }
+                out = c
+            }
+            input?.append(out)
+            if video { lastRawVideo = pts; pts = CMTimeSubtract(pts, pausedOffset); lastTime = pts }
         }
     }
 

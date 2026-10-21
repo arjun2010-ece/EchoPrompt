@@ -93,6 +93,8 @@ class EchopromptCameraPlugin : FlutterPlugin, ActivityAware, MethodChannel.Metho
                     startRecording(call.argument<Boolean>("landscape") ?: false, call.argument<Int>("height") ?: 1080)
                     result.success(null)
                 }
+                "pauseRecording" -> { recorder?.pause(); result.success(null) }
+                "resumeRecording" -> { recorder?.resume(); result.success(null) }
                 "stopRecording" -> result.success(finishRecording(call.argument<String>("reason") ?: "user"))
                 "saveToGallery" -> { saveToGallery(call.argument<String>("path")!!); result.success(null) }
                 "headphonesConnected" -> result.success(headphones())
@@ -326,6 +328,9 @@ private class Recorder(
     private val lock = Object()
     private var startUs = 0L
     private var lastPtsUs = 0L
+    // Paused spans in the recorder's raw clock; samples inside are dropped and
+    // later ones are shifted back so the file has no gap.
+    private val pauses = mutableListOf<LongArray>()
     private var vThread: Thread? = null
     @Volatile private var running = false
 
@@ -353,14 +358,41 @@ private class Recorder(
         vThread = Thread { drain(videoCodec, true) }.also { it.start() }
     }
 
+    private fun nowUs() = SystemClock.elapsedRealtimeNanos() / 1000
+
+    fun pause() {
+        synchronized(pauses) {
+            if (pauses.lastOrNull()?.get(1) != Long.MAX_VALUE) pauses.add(longArrayOf(nowUs(), Long.MAX_VALUE))
+        }
+    }
+
+    fun resume() {
+        synchronized(pauses) {
+            pauses.lastOrNull()?.takeIf { it[1] == Long.MAX_VALUE }?.set(1, nowUs())
+        }
+    }
+
+    /** Recording-timeline timestamp for a raw one, or -1 if it falls inside a pause. */
+    private fun timeline(rawUs: Long): Long {
+        synchronized(pauses) {
+            var shift = 0L
+            for (p in pauses) {
+                if (rawUs >= p[1]) shift += p[1] - p[0] else if (rawUs >= p[0]) return -1
+            }
+            return (rawUs - startUs - shift).coerceAtLeast(0)
+        }
+    }
+
     fun onAudio(pcm: ShortArray, ptsUs: Long) {
         if (!running) return
+        val t = timeline(ptsUs)
+        if (t < 0) return
         val i = audioCodec.dequeueInputBuffer(0)
         if (i < 0) return
         val buf = audioCodec.getInputBuffer(i)!!
         buf.clear()
         buf.asShortBuffer().put(pcm)
-        audioCodec.queueInputBuffer(i, 0, pcm.size * 2, (ptsUs - startUs).coerceAtLeast(0), 0)
+        audioCodec.queueInputBuffer(i, 0, pcm.size * 2, t, 0)
         drainAudioOnce()
     }
 
@@ -388,9 +420,11 @@ private class Recorder(
                 while (!muxerStarted && running) lock.wait(50)
                 if (muxerStarted) {
                     // Video timestamps arrive in the camera's CLOCK_BOOTTIME base.
-                    if (video) info.presentationTimeUs = (info.presentationTimeUs - startUs).coerceAtLeast(0)
-                    if (video) lastPtsUs = info.presentationTimeUs
-                    muxer.writeSampleData(if (video) videoTrack else audioTrack, data, info)
+                    val t = if (video) timeline(info.presentationTimeUs) else info.presentationTimeUs
+                    if (t >= 0) {
+                        if (video) { info.presentationTimeUs = t; lastPtsUs = t }
+                        muxer.writeSampleData(if (video) videoTrack else audioTrack, data, info)
+                    }
                 }
             }
         }
