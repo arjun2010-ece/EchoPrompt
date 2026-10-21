@@ -43,6 +43,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   void _saveFraction(bool landscape, double v) =>
       ref.read(prefsProvider).setDouble('EchoPrompt.overlay.${landscape ? 'l' : 'p'}', v);
   final _dragFractions = <bool, double>{};
+  static const _barHeight = 56.0;
 
   @override
   void initState() {
@@ -215,15 +216,18 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
           Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(_error!, style: const TextStyle(color: Colors.white), textAlign: TextAlign.center))),
         // Floating prompter overlay docked at the top, below the safe area.
         Positioned(
-          left: 0,
-          right: 0,
-          top: media.padding.top,
+          left: 12,
+          right: 12,
+          top: media.padding.top + 12,
           height: media.size.height * fraction,
           child: Stack(children: [
-            PromptView(
-                            style: PromptLayoutStyle.compact,
-              backgroundOpacity: ref.watch(settingsProvider.select((s) => s.opacity)) * 0.8,
-              onClose: _recording ? null : () => Navigator.of(context).pop(),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: PromptView(
+                style: PromptLayoutStyle.compact,
+                backgroundOpacity: ref.watch(settingsProvider.select((s) => s.opacity)) * 0.4,
+                showControls: false,
+              ),
             ),
             Positioned(
               left: 0,
@@ -245,13 +249,13 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         if (_recording)
           Positioned(
             right: 12,
-            bottom: media.padding.bottom + 90,
+            bottom: media.padding.bottom + 12 + _barHeight + 12 + 72 + 12,
             child: Chip(avatar: const Icon(Icons.fiber_manual_record, color: Colors.red, size: 14), label: Text(_fmt(_elapsed))),
           ),
         Positioned(
           left: 0,
           right: 0,
-          bottom: media.padding.bottom + 12,
+          bottom: media.padding.bottom + 12 + _barHeight + 12,
           // Equal side slots keep the record button centred.
           child: Row(children: [
             Expanded(
@@ -313,6 +317,20 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
               ),
             ),
           ]),
+        ),
+        Positioned(
+          left: 12,
+          right: 12,
+          bottom: media.padding.bottom + 12,
+          height: _barHeight,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(_barHeight / 2),
+            child: PromptControlBar(
+              compact: false,
+              color: Colors.black.withValues(alpha: 0.6),
+              onClose: _recording ? null : () => Navigator.of(context).pop(),
+            ),
+          ),
         ),
       ]),
     );

@@ -28,8 +28,8 @@ class CameraPreviewInfo {
   /// The recorded file is never mirrored.
   final bool mirrored;
 
-  /// Clockwise quarter turns to apply (Android delivers sensor-oriented
-  /// frames); 0 on iOS where buffers are already upright.
+  /// Clockwise quarter turns to apply for the display rotation (the texture is
+  /// already sensor-upright); 0 in portrait and on iOS.
   final int quarterTurns;
 
   double get aspectRatio => width / height;

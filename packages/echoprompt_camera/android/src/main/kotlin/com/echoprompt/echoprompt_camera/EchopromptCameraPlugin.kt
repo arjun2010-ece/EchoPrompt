@@ -154,8 +154,11 @@ class EchopromptCameraPlugin : FlutterPlugin, ActivityAware, MethodChannel.Metho
             override fun onOpened(device: CameraDevice) {
                 camera = device
                 createSession(listOf(Surface(e.surfaceTexture())))
-                val turns = upright(displayRotationDegrees()) / 90
-                val swap = turns % 2 == 1
+                val display = displayRotationDegrees()
+                val swap = (upright(display) / 90) % 2 == 1
+                // Flutter's texture layer already applies the sensor rotation, so
+                // Dart only compensates for the display rotation.
+                val turns = (360 - display) % 360 / 90
                 if (!replied) {
                     replied = true
                     main.post {
