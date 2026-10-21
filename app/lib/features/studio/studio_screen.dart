@@ -368,6 +368,10 @@ class _EditorState extends ConsumerState<_Editor> {
     ref.listen(studioProvider.select((s) => s.scriptRevision), (_, _) {
       _controller.text = ref.read(studioProvider).script;
     });
+    // A script edited from a prompter screen comes back without a revision bump.
+    ref.listen(studioProvider.select((s) => s.script), (_, script) {
+      if (_controller.text != script) _controller.text = script;
+    });
     final script = ref.watch(studioProvider.select((s) => s.script));
     final notifier = ref.read(studioProvider.notifier);
     final theme = Theme.of(context);

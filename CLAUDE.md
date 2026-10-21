@@ -29,6 +29,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   Reuse existing spacing values and conventions rather than introducing
   one-off numbers.
 
+- Any code change must not leave stale values or introduce regressions. Before
+  finishing, trace every screen, controller, or cached state that reads the data
+  you changed (for example, a text field that only reloads on a revision bump)
+  and make sure it reflects the update, so the same feature does not need to be
+  reworked repeatedly.
+
 ## Efficient investigation and validation
 
 - Start with targeted searches and read only the relevant code sections.

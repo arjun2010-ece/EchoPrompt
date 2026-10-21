@@ -11,6 +11,7 @@ import '../prompter/prompt_surface.dart';
 import '../prompter/prompter_controller.dart';
 import '../prompter/tracking_status.dart';
 import 'reading_settings.dart';
+import 'script_editor_sheet.dart';
 
 /// Window width from which the reader uses its roomy tablet layout.
 const _wideMinWidth = 720.0;
@@ -84,6 +85,17 @@ class _ReadScreenState extends ConsumerState<ReadScreen> {
     Navigator.of(context).pop();
   }
 
+  Future<void> _edit() async {
+    if (!await showScriptEditor(context, ref)) return;
+    final studio = ref.read(studioProvider);
+    await ref.read(prompterProvider.notifier).begin(
+      sessionId: studio.sessionId,
+      script: studio.script,
+      mode: ref.read(settingsProvider).mode,
+      audioPath: ref.read(audioPathProvider),
+    );
+  }
+
   void _togglePlay() {
     HapticFeedback.selectionClick();
     ref.read(prompterProvider.notifier).togglePlay();
@@ -134,7 +146,7 @@ class _ReadScreenState extends ConsumerState<ReadScreen> {
                 left: 0,
                 right: 0,
                 bottom: 0,
-                child: _Dock(visible: _chrome, wide: wide, bottomInset: pad.bottom, onTogglePlay: _togglePlay),
+                child: _Dock(visible: _chrome, wide: wide, bottomInset: pad.bottom, onTogglePlay: _togglePlay, onEdit: _edit),
               ),
             ]);
           }),
@@ -210,12 +222,19 @@ class _TopBar extends ConsumerWidget {
 // --- Dock ----------------------------------------------------------------------------
 
 class _Dock extends ConsumerWidget {
-  const _Dock({required this.visible, required this.wide, required this.bottomInset, required this.onTogglePlay});
+  const _Dock({
+    required this.visible,
+    required this.wide,
+    required this.bottomInset,
+    required this.onTogglePlay,
+    required this.onEdit,
+  });
 
   final bool visible;
   final bool wide;
   final double bottomInset;
   final VoidCallback onTogglePlay;
+  final VoidCallback onEdit;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -261,10 +280,20 @@ class _Dock extends ConsumerWidget {
               ),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                  _RoundButton(icon: Icons.replay, tooltip: 'Restart', onPressed: c.restart),
+                // Equal side slots keep the play button centred whatever the side widths.
+                child: Row(children: [
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        _RoundButton(icon: Icons.replay, tooltip: 'Restart', onPressed: c.restart),
+                        const SizedBox(width: 8),
+                        _RoundButton(icon: Icons.edit_outlined, tooltip: 'Edit script', onPressed: onEdit),
+                      ]),
+                    ),
+                  ),
                   _PlayButton(size: playSize, playing: pr.playing, busy: pr.preparing, onPressed: onTogglePlay),
-                  stepper,
+                  Expanded(child: Align(alignment: Alignment.centerRight, child: stepper)),
                 ]),
               ),
             ),

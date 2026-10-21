@@ -12,6 +12,7 @@ import '../../services/permissions/permissions.dart';
 import '../../services/providers.dart';
 import '../prompter/prompt_view.dart';
 import '../prompter/prompter_controller.dart';
+import '../read/script_editor_sheet.dart';
 
 /// R2: in-app camera (front/back) with the prompter overlay docked at the
 /// top, in portrait and landscape. The prompter is a UI overlay only and is
@@ -93,6 +94,10 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       // One mic stream feeds the video file and the speech engine.
       externalSamples: EchoPromptCamera.audioSamples,
     );
+  }
+
+  Future<void> _edit() async {
+    if (await showScriptEditor(context, ref)) _beginPrompter();
   }
 
   Future<void> _flip() async {
@@ -247,11 +252,22 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
           left: 0,
           right: 0,
           bottom: media.padding.bottom + 12,
-          child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-            IconButton.filledTonal(
-              tooltip: 'Flip camera',
-              icon: const Icon(Icons.cameraswitch),
-              onPressed: _recording ? null : _flip,
+          // Equal side slots keep the record button centred.
+          child: Row(children: [
+            Expanded(
+              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                IconButton.filledTonal(
+                  tooltip: 'Flip camera',
+                  icon: const Icon(Icons.cameraswitch),
+                  onPressed: _recording ? null : _flip,
+                ),
+                const SizedBox(width: 8),
+                IconButton.filledTonal(
+                  tooltip: 'Edit script',
+                  icon: const Icon(Icons.edit_outlined),
+                  onPressed: _recording ? null : _edit,
+                ),
+              ]),
             ),
             GestureDetector(
               onTap: p == null || _countdown != null ? null : () => _toggleRecord(landscape),
@@ -268,7 +284,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                 ),
               ),
             ),
-            PopupMenuButton<String>(
+            Expanded(
+              child: Center(
+                child: PopupMenuButton<String>(
               icon: const Icon(Icons.more_horiz, color: Colors.white),
               onSelected: (v) => setState(() {
                 switch (v) {
@@ -291,6 +309,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                 CheckedPopupMenuItem(value: 'silent', checked: _route == ReferenceRoute.silent, child: const Text('Silent pacing (not in the video)')),
                 CheckedPopupMenuItem(value: 'speaker', checked: _route == ReferenceRoute.speaker, child: const Text('Speaker (in the video)')),
               ],
+            ),
+              ),
             ),
           ]),
         ),
