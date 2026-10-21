@@ -23,6 +23,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   introduce abstractions, or restructure the project unless necessary for
   the requested outcome.
 
+- When creating or modifying any UI component or layout, ensure equal spatial
+  distribution and uniform spacing (consistent padding, margins, gaps, and
+  alignment between sibling elements) so the UI looks polished and balanced.
+  Reuse existing spacing values and conventions rather than introducing
+  one-off numbers.
+
 ## Efficient investigation and validation
 
 - Start with targeted searches and read only the relevant code sections.
