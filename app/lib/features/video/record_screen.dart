@@ -39,6 +39,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   ReferenceRoute _route = ReferenceRoute.silent;
   StreamSubscription<Map<Object?, Object?>>? _events;
   DateTime? _micStart;
+  static const _pausedColor = Colors.amber;
 
   // Overlay height as a fraction of the screen, remembered per orientation.
   double _fractionFor(bool landscape) =>
@@ -47,7 +48,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       ref.read(prefsProvider).setDouble('EchoPrompt.overlay.${landscape ? 'l' : 'p'}', v);
   final _dragFractions = <bool, double>{};
   static const _barHeight = 56.0;
-  static const _recordButtonSize = 40.0;
+  static const _recordButtonSize = 45.0;
   static const _fadeIn = Duration(milliseconds: 250);
 
   @override
@@ -139,6 +140,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       _timer = Timer.periodic(const Duration(seconds: 1), (_) => setState(() => _elapsed += const Duration(seconds: 1)));
 
   Future<void> _togglePause() async {
+    HapticFeedback.mediumImpact();
     final prompter = ref.read(prompterProvider.notifier);
     if (_paused) {
       await EchoPromptCamera.resumeRecording();
@@ -339,7 +341,12 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
           Positioned(
             right: 12,
             bottom: media.padding.bottom + 12 + _barHeight + 12 + _recordButtonSize + 12,
-            child: Chip(avatar: const Icon(Icons.fiber_manual_record, color: Colors.red, size: 14), label: Text(_fmt(_elapsed))),
+            child: Chip(
+              avatar: _paused
+                  ? const Icon(Icons.pause, color: _pausedColor, size: 14)
+                  : const Icon(Icons.fiber_manual_record, color: Colors.red, size: 14),
+              label: Text(_fmt(_elapsed)),
+            ),
           ),
         Positioned(
           left: 0,
@@ -362,17 +369,21 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                 ),
               ]),
             ),
-            GestureDetector(
-              onTap: p == null || _countdown != null ? null : () => _toggleRecord(landscape),
-              child: Container(
-                width: _recordButtonSize,
-                height: _recordButtonSize,
-                decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 4)),
-                padding: const EdgeInsets.all(6),
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: Colors.red,
-                    borderRadius: BorderRadius.circular(_recording ? 8 : 40),
+            Semantics(
+              button: true,
+              label: _recording ? 'Stop recording' : 'Start recording',
+              child: GestureDetector(
+                onTap: p == null || _countdown != null ? null : () => _toggleRecord(landscape),
+                child: Container(
+                  width: _recordButtonSize,
+                  height: _recordButtonSize,
+                  decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 4)),
+                  padding: const EdgeInsets.all(6),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(_recording ? 3 : 40),
+                    ),
                   ),
                 ),
               ),
