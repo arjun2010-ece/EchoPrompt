@@ -58,9 +58,11 @@ class EchoPromptCamera {
   /// Microphone samples ([-1, 1], 16 kHz, mono). The mic is opened when the
   /// first listener subscribes and closed when the last one cancels (unless a
   /// recording is in progress).
-  static Stream<Float32List> get audioSamples => _audio
-      .receiveBroadcastStream()
-      .map((d) => (d as Uint8List).buffer.asFloat32List(d.offsetInBytes ~/ 4 * 4, d.lengthInBytes ~/ 4));
+  static Stream<Float32List> get audioSamples => _audio.receiveBroadcastStream().map((d) {
+    // The codec doesn't align byte arrays, so copy to offset 0 before viewing as floats.
+    final bytes = Uint8List.fromList(d as Uint8List);
+    return bytes.buffer.asFloat32List(0, bytes.lengthInBytes ~/ 4);
+  });
 
   /// `{type: interrupted|storage_full|orientation|error, ...}`
   static Stream<Map<Object?, Object?>> get events =>
