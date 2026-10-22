@@ -167,9 +167,10 @@ class ScriptListBody extends ConsumerWidget {
       if (history.isNotEmpty) const SizedBox(height: 8),
       _ScriptRow(
         title: 'Welcome to EchoPrompt',
-        meta: '${_words(wordCount(StudioNotifier.welcome))} · ${readingTimeLabel(wordCount(StudioNotifier.welcome))}',
+        meta: _words(wordCount(StudioNotifier.welcome)),
         icon: Icons.star_rounded,
         demo: true,
+        reserveMenuSpace: menuItems != null,
         dense: dense,
         current: highlightCurrent && !selecting && currentId == null && demoOpen,
         selecting: selecting,
@@ -193,6 +194,7 @@ class _ScriptRow extends StatelessWidget {
     required this.selecting,
     this.ticked = false,
     this.demo = false,
+    this.reserveMenuSpace = false,
     this.onTap,
     this.onLongPress,
     this.onRead,
@@ -204,6 +206,9 @@ class _ScriptRow extends StatelessWidget {
   final String meta;
   final IconData icon;
   final bool demo;
+
+  /// Keeps the overflow menu's space when this row has no menu of its own.
+  final bool reserveMenuSpace;
   final bool dense;
   final bool current;
   final bool selecting;
@@ -293,7 +298,7 @@ class _ScriptRow extends StatelessWidget {
                           if (demo) ...[
                             const SizedBox(width: 8),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+                              padding: const EdgeInsets.symmetric(horizontal: 7),
                               decoration: BoxDecoration(color: scheme.tertiaryContainer, borderRadius: BorderRadius.circular(8)),
                               child: Text(
                                 'DEMO',
@@ -311,12 +316,20 @@ class _ScriptRow extends StatelessWidget {
                   ),
                   if (onRead != null)
                     IconButton.filledTonal(tooltip: 'Start "$title"', icon: const Icon(Icons.play_arrow_rounded), onPressed: onRead),
-                  if (menuItems != null)
-                    PopupMenuButton<String>(
-                      tooltip: 'More',
-                      icon: Icon(Icons.more_horiz, size: dense ? 18 : 24),
-                      onSelected: onMenu,
-                      itemBuilder: (_) => menuItems!(),
+                  // The demo has no menu but keeps its space so its play button
+                  // lines up with the other rows.
+                  if (menuItems != null || reserveMenuSpace)
+                    Visibility(
+                      visible: menuItems != null,
+                      maintainSize: true,
+                      maintainAnimation: true,
+                      maintainState: true,
+                      child: PopupMenuButton<String>(
+                        tooltip: 'More',
+                        icon: Icon(Icons.more_horiz, size: dense ? 18 : 24),
+                        onSelected: onMenu,
+                        itemBuilder: (_) => menuItems?.call() ?? const [],
+                      ),
                     ),
                   if (menuItems == null && onRead == null) SizedBox(width: dense ? 8 : 12),
                 ]),
