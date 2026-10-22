@@ -2,6 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+# Ignore this file
+- @App-Description.md should be ignored for any analysis, we will delete it later.
+
 ## Task scope and execution rules
 
 - Implement only the requested change and the directly necessary supporting
