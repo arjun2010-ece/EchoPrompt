@@ -157,7 +157,8 @@ class StudioNotifier extends Notifier<StudioState> {
     final id = _currentId ?? DateTime.now().microsecondsSinceEpoch.toString();
     final script = SavedScript(id: id, body: state.script, savedAt: DateTime.now());
     if (!ref.read(entitlementsProvider).canStartPrompter(script)) return;
-    await flush();
+    // Saving is disk I/O; don't hold up the screen change for it.
+    unawaited(flush());
     state = state.copyWith(sessionId: state.sessionId + 1, presenting: true);
     ref.read(analyticsProvider).log('teleprompter_start', {
       'mode': ref.read(settingsProvider).mode.name,

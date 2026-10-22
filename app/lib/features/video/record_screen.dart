@@ -47,6 +47,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   final _dragFractions = <bool, double>{};
   static const _barHeight = 56.0;
   static const _recordButtonSize = 40.0;
+  static const _fadeIn = Duration(milliseconds: 250);
 
   @override
   void initState() {
@@ -56,7 +57,25 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     _init();
   }
 
+  /// Resolves once the push transition has finished, so camera and recognizer
+  /// start-up never competes with it for the UI thread.
+  Future<void> _transitionDone() async {
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+    final animation = ModalRoute.of(context)?.animation;
+    if (animation == null || animation.isCompleted) return;
+    final done = Completer<void>();
+    void listener(AnimationStatus st) {
+      if (st == AnimationStatus.completed && !done.isCompleted) done.complete();
+    }
+    animation.addStatusListener(listener);
+    await done.future.timeout(const Duration(seconds: 1), onTimeout: () {});
+    animation.removeStatusListener(listener);
+  }
+
   Future<void> _init() async {
+    await _transitionDone();
+    if (!mounted) return;
     final a = ref.read(analyticsProvider);
     final cam = await requestPermission(Permission.camera, 'camera', a);
     final mic = await requestPermission(Permission.microphone, 'mic', a);
@@ -74,6 +93,10 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       if (type == 'interrupted' || type == 'storage_full') _onStopped(null, '$type');
     });
     await _startPreview();
+    // Let the preview paint before the prompter does heavy start-up work
+    // (e.g. transcribing the audio file in Audio mode) on the same thread.
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
     _beginPrompter();
   }
 
@@ -252,13 +275,19 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(fit: StackFit.expand, children: [
+        if (p == null && _error == null) const Center(child: CircularProgressIndicator(color: Colors.white54)),
         if (p != null)
-          Center(
-            child: AspectRatio(
-              aspectRatio: p.aspectRatio,
-              child: Transform.flip(
-                flipX: p.mirrored,
-                child: RotatedBox(quarterTurns: p.quarterTurns, child: Texture(textureId: p.textureId)),
+          TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: 1),
+            duration: _fadeIn,
+            builder: (_, v, child) => Opacity(opacity: v, child: child),
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: p.aspectRatio,
+                child: Transform.flip(
+                  flipX: p.mirrored,
+                  child: RotatedBox(quarterTurns: p.quarterTurns, child: Texture(textureId: p.textureId)),
+                ),
               ),
             ),
           ),
@@ -270,7 +299,11 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
           right: 12,
           top: media.padding.top + 12,
           height: media.size.height * fraction,
-          child: Stack(children: [
+          // Appears together with the camera instead of before it.
+          child: AnimatedOpacity(
+            opacity: p == null ? 0 : 1,
+            duration: _fadeIn,
+            child: Stack(children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(20),
               child: PromptView(
@@ -292,7 +325,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                 child: const SizedBox(height: 22, child: Center(child: Icon(Icons.drag_handle, color: Colors.white70, size: 18))),
               ),
             ),
-          ]),
+            ]),
+          ),
         ),
         if (_countdown != null)
           Center(child: Text('$_countdown', style: const TextStyle(color: Colors.white, fontSize: 120, fontWeight: FontWeight.bold))),
