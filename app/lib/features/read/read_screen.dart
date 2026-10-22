@@ -85,6 +85,12 @@ class _ReadScreenState extends ConsumerState<ReadScreen> {
     Navigator.of(context).pop();
   }
 
+  /// Back to the scripts list, skipping the editor.
+  void _home() {
+    ref.read(prompterProvider.notifier).pause();
+    Navigator.of(context).popUntil((r) => r.isFirst);
+  }
+
   Future<void> _edit() async {
     if (!await showScriptEditor(context, ref)) return;
     final studio = ref.read(studioProvider);
@@ -147,7 +153,7 @@ class _ReadScreenState extends ConsumerState<ReadScreen> {
                 top: 0,
                 left: 0,
                 right: 0,
-                child: _TopBar(visible: _chrome, wide: wide, topInset: pad.top, onClose: _close),
+                child: _TopBar(visible: _chrome, wide: wide, topInset: pad.top, onClose: _close, onHome: _home),
               ),
               Positioned(
                 left: 0,
@@ -165,13 +171,17 @@ class _ReadScreenState extends ConsumerState<ReadScreen> {
 
 // --- Top bar -----------------------------------------------------------------------
 
+/// Two round buttons and the gap between them.
+const _sideSlotWidth = 48.0 * 2 + 8;
+
 class _TopBar extends ConsumerWidget {
-  const _TopBar({required this.visible, required this.wide, required this.topInset, required this.onClose});
+  const _TopBar({required this.visible, required this.wide, required this.topInset, required this.onClose, required this.onHome});
 
   final bool visible;
   final bool wide;
   final double topInset;
   final VoidCallback onClose;
+  final VoidCallback onHome;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -185,10 +195,18 @@ class _TopBar extends ConsumerWidget {
     return Padding(
       padding: EdgeInsets.fromLTRB(12, math.max(topInset, 8) + 4, 12, 0),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _FadeIn(
-          visible: visible,
-          duration: duration,
-          child: _RoundButton(icon: Icons.close, tooltip: 'Close', onPressed: onClose),
+        // Equal-width side slots keep the status centred.
+        SizedBox(
+          width: _sideSlotWidth,
+          child: _FadeIn(
+            visible: visible,
+            duration: duration,
+            child: Row(children: [
+              _RoundButton(icon: Icons.close, tooltip: 'Close', onPressed: onClose),
+              const SizedBox(width: 8),
+              _RoundButton(icon: Icons.home_outlined, tooltip: 'Scripts', onPressed: onHome),
+            ]),
+          ),
         ),
         Expanded(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -212,13 +230,19 @@ class _TopBar extends ConsumerWidget {
               ),
           ]),
         ),
-        _FadeIn(
-          visible: visible,
-          duration: duration,
-          child: _RoundButton(
-            icon: Icons.tune,
-            tooltip: 'Reading settings',
-            onPressed: () => showReadingSettings(context),
+        SizedBox(
+          width: _sideSlotWidth,
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: _FadeIn(
+              visible: visible,
+              duration: duration,
+              child: _RoundButton(
+                icon: Icons.tune,
+                tooltip: 'Reading settings',
+                onPressed: () => showReadingSettings(context),
+              ),
+            ),
           ),
         ),
       ]),

@@ -153,8 +153,11 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     }
   }
 
-  /// Close while recording: save the take, or discard it and go back to the scripts.
-  Future<void> _confirmClose() async {
+  void _home() => Navigator.of(context).popUntil((r) => r.isFirst);
+
+  /// Close while recording: save the take, or discard it and go back to the
+  /// scripts. [home] also leaves for the scripts list after saving.
+  Future<void> _confirmClose({bool home = false}) async {
     final choice = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -170,13 +173,14 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     final r = await EchoPromptCamera.stopRecording();
     if (choice == 'save') {
       await _onStopped(r, 'user');
+      if (home && mounted) _home();
       return;
     }
     await _onStopped(null, 'discarded');
     try {
       await File(r.path).delete();
     } catch (_) {}
-    if (mounted) Navigator.of(context).pop();
+    if (mounted) _home();
   }
 
   Future<void> _toggleRecord(bool landscape) async {
@@ -419,6 +423,13 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
             child: PromptControlBar(
               onSettings: () => showReadingSettings(context, follow: false),
               compact: false,
+              trailing: [
+                IconButton(
+                  tooltip: 'Scripts',
+                  icon: const Icon(Icons.home_outlined),
+                  onPressed: _recording ? () => _confirmClose(home: true) : _home,
+                ),
+              ],
               color: Colors.black.withValues(alpha: 0.6),
               onClose: _recording ? _confirmClose : () => Navigator.of(context).pop(),
             ),
