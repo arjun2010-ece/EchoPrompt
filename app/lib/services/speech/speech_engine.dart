@@ -63,43 +63,31 @@ List<TranscriptSegment> groupTokensIntoWords(
 List<String> newWordsSince(List<String> current, int alreadyEmitted) =>
     current.length > alreadyEmitted ? current.sublist(alreadyEmitted) : const [];
 
-/// Turns the recogniser's changing hypothesis into words that can be trusted.
-/// A streaming recogniser spells a word out piece by piece ("fi" -> "five") and
-/// may revise its latest word, so the newest word is held back until the next
-/// word starts, the hypothesis stops changing for [settleSeconds] of audio, or
-/// the utterance ends ([flush]). The recogniser only refreshes its text every
-/// few hundred ms, so the settle time must be well above that.
-class StableWordEmitter {
-  StableWordEmitter({this.settleSeconds = 0.4});
+/// Turns the recogniser's changing hypothesis into the words to follow. A
+/// streaming recogniser never retracts what it has decoded, but it spells a word
+/// out piece by piece ("fi" -> "five"). A word is reported as soon as it appears
+/// and again whenever its spelling grows, so the matcher sees the finished word
+/// without waiting for the next one to start (which cost about a word of lag).
+class LiveWordEmitter {
+  var _emitted = <String>[];
 
-  final double settleSeconds;
-  var _emitted = 0;
-  var _last = '';
-  var _unchanged = 0.0;
-
-  /// [hypothesis] is the recogniser's current text for the utterance and
-  /// [seconds] the audio fed since the previous call.
-  List<String> update(String hypothesis, double seconds) {
+  /// [hypothesis] is the recogniser's current text for the utterance.
+  List<String> update(String hypothesis) {
     final words = spokenWords(hypothesis);
-    _unchanged = hypothesis == _last ? _unchanged + seconds : 0;
-    _last = hypothesis;
-    if (words.length < _emitted) _emitted = words.length;
-    final stable = _unchanged >= settleSeconds ? words.length : words.length - 1;
-    if (stable <= _emitted) return const [];
-    final fresh = words.sublist(_emitted, stable);
-    _emitted = stable;
+    if (words.length < _emitted.length) {
+      _emitted = words;
+      return const [];
+    }
+    final fresh = <String>[
+      if (_emitted.isNotEmpty && words[_emitted.length - 1] != _emitted.last) words[_emitted.length - 1],
+      ...words.sublist(_emitted.length),
+    ];
+    _emitted = words;
     return fresh;
   }
 
-  /// Releases whatever is left at the end of an utterance and starts afresh.
-  List<String> flush() {
-    final words = spokenWords(_last);
-    final fresh = _emitted < words.length ? words.sublist(_emitted) : const <String>[];
-    _emitted = 0;
-    _last = '';
-    _unchanged = 0;
-    return fresh;
-  }
+  /// Starts afresh at the end of an utterance.
+  void reset() => _emitted = [];
 }
 
 Float32List pcm16ToFloat(Uint8List bytes) {

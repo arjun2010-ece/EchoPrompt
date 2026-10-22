@@ -14,10 +14,16 @@ class SherpaSpeechEngine implements SpeechEngine {
   sherpa.OnlineRecognizer? _online;
   sherpa.OfflineRecognizer? _offline;
   String? _dir;
+  Future<void>? _loading;
 
+  // Shared so a warm-up and the first Start never copy the model files twice at once.
   @override
-  Future<void> init() async {
-    if (_dir != null) return;
+  Future<void> init() => _loading ??= _locate().catchError((Object e, StackTrace st) {
+    _loading = null; // a later call may succeed, e.g. once the model is installed
+    Error.throwWithStackTrace(e, st);
+  });
+
+  Future<void> _locate() async {
     final dir = await ModelStore.english();
     if (dir == null) {
       throw SpeechUnavailable(
@@ -26,6 +32,13 @@ class SherpaSpeechEngine implements SpeechEngine {
     }
     sherpa.initBindings();
     _dir = dir.path;
+  }
+
+  /// Loads the streaming model ahead of Voice mode's Start. The microphone is only
+  /// attached once the recognizer exists, so loading it then drops the first spoken words.
+  Future<void> warmUp() async {
+    await init();
+    _onlineRecognizer();
   }
 
   sherpa.OnlineRecognizer _onlineRecognizer() => _online ??= () {
@@ -42,6 +55,9 @@ class SherpaSpeechEngine implements SpeechEngine {
           numThreads: 2,
           debug: false,
         ),
+        // This small streaming model otherwise swallows the first syllables of speech that
+        // follows silence; a positive penalty makes it commit to them sooner.
+        blankPenalty: 3.0,
         rule1MinTrailingSilence: 1.0,
         rule2MinTrailingSilence: 0.6,
       ),
@@ -70,18 +86,17 @@ class SherpaSpeechEngine implements SpeechEngine {
   Stream<List<String>> listen(Stream<Float32List> samples) async* {
     final rec = _onlineRecognizer();
     final stream = rec.createStream();
-    final emitter = StableWordEmitter();
+    final emitter = LiveWordEmitter();
     try {
       await for (final chunk in samples) {
         stream.acceptWaveform(samples: chunk, sampleRate: 16000);
         while (rec.isReady(stream)) {
           rec.decode(stream);
         }
-        final fresh = emitter.update(rec.getResult(stream).text, chunk.length / 16000);
+        final fresh = emitter.update(rec.getResult(stream).text);
         if (fresh.isNotEmpty) yield fresh;
         if (rec.isEndpoint(stream)) {
-          final tail = emitter.flush();
-          if (tail.isNotEmpty) yield tail;
+          emitter.reset();
           rec.reset(stream);
         }
       }

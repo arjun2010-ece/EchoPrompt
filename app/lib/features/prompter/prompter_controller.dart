@@ -125,6 +125,14 @@ class PrompterController extends Notifier<PrompterState> {
     if (mode == PromptControlMode.recordedAudio) await _prepareAudio();
   }
 
+  /// Loads the speech model before Voice mode's Start, so Start doesn't spend its first
+  /// seconds (and the first spoken words) on it. Loading blocks the UI thread briefly, so
+  /// call it once the screen is on display, not while its route is still animating in.
+  void warmUpVoice() {
+    final engine = ref.read(speechEngineProvider);
+    if (engine is SherpaSpeechEngine) unawaited(engine.warmUp().catchError((Object _) {}));
+  }
+
   Stream<Float32List>? _externalSamples;
   bool _audible = true;
   String? _audioPath;

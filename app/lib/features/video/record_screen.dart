@@ -132,6 +132,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
   void _beginPrompter() {
     final studio = ref.read(studioProvider);
     final s = ref.read(settingsProvider);
+    if (s.mode == PromptControlMode.voice) ref.read(prompterProvider.notifier).warmUpVoice();
     ref.read(prompterProvider.notifier).begin(
       sessionId: studio.sessionId,
       script: studio.script,
