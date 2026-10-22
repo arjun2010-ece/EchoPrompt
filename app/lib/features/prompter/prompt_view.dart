@@ -53,9 +53,12 @@ class PromptView extends ConsumerWidget {
 
 /// Play/restart/speed/mode controls for the prompter.
 class PromptControlBar extends ConsumerWidget {
-  const PromptControlBar({super.key, this.compact = true, this.onClose, this.trailing = const [], this.color});
+  const PromptControlBar({super.key, this.compact = true, this.onClose, this.trailing = const [], this.color, this.onSettings});
 
   final bool compact;
+
+  /// Replaces the mode menu with a settings button, for screens whose mode is fixed.
+  final VoidCallback? onSettings;
   final VoidCallback? onClose;
   final List<Widget> trailing;
   final Color? color;
@@ -94,6 +97,9 @@ class PromptControlBar extends ConsumerWidget {
             ),
           ),
         ),
+        if (onSettings != null)
+          IconButton(tooltip: 'Settings', icon: const Icon(Icons.tune), onPressed: onSettings)
+        else
         PopupMenuButton<PromptControlMode>(
           tooltip: 'Mode',
           icon: Icon(Icons.tune, color: fg),

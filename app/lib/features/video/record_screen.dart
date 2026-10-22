@@ -13,6 +13,7 @@ import '../../services/permissions/permissions.dart';
 import '../../services/providers.dart';
 import '../prompter/prompt_view.dart';
 import '../prompter/prompter_controller.dart';
+import '../read/reading_settings.dart';
 import '../read/script_editor_sheet.dart';
 
 /// R2: in-app camera (front/back) with the prompter overlay docked at the
@@ -416,6 +417,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
           child: ClipRRect(
             borderRadius: BorderRadius.circular(_barHeight / 2),
             child: PromptControlBar(
+              onSettings: () => showReadingSettings(context, follow: false),
               compact: false,
               color: Colors.black.withValues(alpha: 0.6),
               onClose: _recording ? _confirmClose : () => Navigator.of(context).pop(),

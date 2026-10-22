@@ -13,8 +13,9 @@ const _panelMinWidth = 720.0;
 /// Opens the reading settings: a bottom sheet on narrow windows, a panel
 /// anchored to the trailing edge on wide ones. [app] adds the app-wide
 /// choices (appearance, crash reports) that Studio offers but the reader
-/// does not.
-Future<void> showReadingSettings(BuildContext context, {bool app = false}) {
+/// does not. [follow] shows the mode choice, which the camera screen hides
+/// because its mode is already fixed.
+Future<void> showReadingSettings(BuildContext context, {bool app = false, bool follow = true}) {
   final wide = MediaQuery.sizeOf(context).width >= _panelMinWidth;
   if (!wide) {
     return showModalBottomSheet<void>(
@@ -27,7 +28,7 @@ Future<void> showReadingSettings(BuildContext context, {bool app = false}) {
         initialChildSize: 0.62,
         minChildSize: 0.4,
         maxChildSize: 0.95,
-        builder: (_, scroll) => ReadingSettings(app: app, controller: scroll),
+        builder: (_, scroll) => ReadingSettings(app: app, follow: follow, controller: scroll),
       ),
     );
   }
@@ -50,7 +51,7 @@ Future<void> showReadingSettings(BuildContext context, {bool app = false}) {
             color: Theme.of(ctx).colorScheme.surfaceContainerLow,
             borderRadius: BorderRadius.circular(28),
             clipBehavior: Clip.antiAlias,
-            child: SizedBox(width: 400, child: ReadingSettings(app: app)),
+            child: SizedBox(width: 400, child: ReadingSettings(app: app, follow: follow)),
           ),
         ),
       ),
@@ -61,9 +62,10 @@ Future<void> showReadingSettings(BuildContext context, {bool app = false}) {
 /// How the prompter follows and shows the script. Frequent choices (mode, text
 /// size) sit first; rarely changed ones follow.
 class ReadingSettings extends ConsumerWidget {
-  const ReadingSettings({super.key, this.app = false, this.controller});
+  const ReadingSettings({super.key, this.app = false, this.follow = true, this.controller});
 
   final bool app;
+  final bool follow;
   final ScrollController? controller;
 
   @override
@@ -97,6 +99,7 @@ class ReadingSettings extends ConsumerWidget {
       padding: EdgeInsets.fromLTRB(24, controller == null ? 20 : 4, 24, 24 + MediaQuery.viewPaddingOf(context).bottom),
       children: [
         Text('Reading settings', style: text.titleLarge),
+        if (follow) ...[
         section('Follow'),
         SizedBox(
           width: double.infinity,
@@ -122,6 +125,7 @@ class ReadingSettings extends ConsumerWidget {
               onPressed: () async => ref.read(audioPathProvider.notifier).set(await ScriptIO.chooseAudio() ?? audio),
             ),
           ),
+        ],
         section('Text'),
         slider('Size', '${s.fontSize.round()}', s.fontSize, PromptLimits.fontSize, (c, x) => c.copyWith(fontSize: x)),
         slider('Spacing', '${s.lineSpacing.toStringAsFixed(2)}×', s.lineSpacing, PromptLimits.lineSpacing, (c, x) => c.copyWith(lineSpacing: x)),
