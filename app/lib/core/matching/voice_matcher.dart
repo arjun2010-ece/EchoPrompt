@@ -78,7 +78,7 @@ class VoiceMatcher {
       }
     }
 
-    final anchored = _reanchor(next);
+    final anchored = _reanchor(next) ?? _reread(next);
     if (anchored != null) {
       next = anchored;
       _window.clear();
@@ -154,6 +154,29 @@ class VoiceMatcher {
         if (r.score > bestScore || (r.score == bestScore && dist < bestDist)) {
           bestScore = r.score;
           bestDist = dist;
+          bestEnd = r.end;
+        }
+      }
+    }
+    return bestEnd;
+  }
+
+  /// The reader went back and repeated an earlier passage: the spoken words since the last
+  /// advance line up with a run of script words *behind* [active]. Only tried when nothing
+  /// ahead matched, and only for a long run with several real words, because short phrases
+  /// repeat all the time. Returns the last word of the repeated run.
+  int? _reread(int active) {
+    final toks = _window;
+    if (toks.length < 4 || active < 1) return null;
+    int? bestEnd;
+    var bestScore = 0;
+    for (var a = 0; a <= toks.length - 4; a++) {
+      for (var p = 0; p < active; p++) {
+        if (_norm[p].isEmpty || !(_tokMatch(toks, a, 1, p) || _tokMatch(toks, a, 2, p) || _formLength(toks, a, p) > 0)) continue;
+        final r = _walk(toks, a, p, 1, -1);
+        if (r == null || r.end >= active || r.count < 4 || r.content < 3 || r.score < 20) continue;
+        if (r.score > bestScore || (r.score == bestScore && r.end > bestEnd!)) {
+          bestScore = r.score;
           bestEnd = r.end;
         }
       }

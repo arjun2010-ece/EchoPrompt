@@ -86,6 +86,7 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
   Duration _last = Duration.zero;
   double _offset = 0;
   double _followTarget = 0;
+  int _lastConfirmed = -1;
   String _rawScript = '';
   String _tidyScript = '';
   WordLayout? _layout;
@@ -113,6 +114,7 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
   void _reset() {
     _offset = 0;
     _followTarget = 0;
+    _lastConfirmed = -1;
     if (_scroll.hasClients) _scroll.jumpTo(0);
     if (!widget.isPreview) ref.read(readingWordProvider.notifier).set(0);
   }
@@ -237,8 +239,12 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
           final next = layout.paragraphStartWithin(idx, PromptSurface._paragraphLookWords);
           if (next != null) scrollWord = math.max(scrollWord, next);
         }
-        // Never pull the prompt backward for a short-lived predictive cue.
-        _followTarget = math.max(_followTarget, math.max(0.0, topPad + layout.midY(scrollWord) - anchorY));
+        // Never pull the prompt backward for a short-lived predictive cue, but do follow the
+        // confirmed word when it moves back (the reader repeated a passage or tapped an earlier word).
+        final target = math.max(0.0, topPad + layout.midY(scrollWord) - anchorY);
+        final confirmed = pr.progress.confirmedWordIndex;
+        _followTarget = confirmed < _lastConfirmed ? target : math.max(_followTarget, target);
+        _lastConfirmed = confirmed;
       }
 
       Widget text = Text.rich(
