@@ -10,6 +10,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../core/settings/prompt_settings.dart';
 import '../../services/permissions/permissions.dart';
+import '../../services/analytics/analytics_service.dart';
 import '../../services/providers.dart';
 import '../prompter/prompt_view.dart';
 import '../prompter/prompter_controller.dart';
@@ -25,7 +26,7 @@ class RecordScreen extends ConsumerStatefulWidget {
   ConsumerState<RecordScreen> createState() => _RecordScreenState();
 }
 
-class _RecordScreenState extends ConsumerState<RecordScreen> {
+class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBindingObserver {
   CameraFacing _facing = CameraFacing.front;
   CameraPreviewInfo? _preview;
   String? _error;
@@ -39,6 +40,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   ReferenceRoute _route = ReferenceRoute.silent;
   StreamSubscription<Map<Object?, Object?>>? _events;
   DateTime? _micStart;
+  bool _opening = false;
+  // Cached because `ref` can't be read in dispose().
+  late final AnalyticsService _analytics;
   static const _pausedColor = Colors.amber;
 
   // Overlay height as a fraction of the screen, remembered per orientation.
@@ -54,8 +58,10 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    ref.read(analyticsProvider).log('video_mode_enter');
+    _analytics = ref.read(analyticsProvider);
+    _analytics.log('video_mode_enter');
     _init();
   }
 
@@ -81,6 +87,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     final a = ref.read(analyticsProvider);
     final cam = await requestPermission(Permission.camera, 'camera', a);
     final mic = await requestPermission(Permission.microphone, 'mic', a);
+    if (!mounted) return;
     if (!cam || !mic) {
       setState(() => _error = 'Camera and microphone access are needed to record.');
       return;
@@ -103,11 +110,22 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   }
 
   Future<void> _startPreview() async {
+    if (_opening) return;
+    _opening = true;
     try {
       final p = await EchoPromptCamera.startPreview(_facing);
-      if (mounted) setState(() => _preview = p);
+      if (!mounted) {
+        // Left the screen while the camera was opening: release it again.
+        EchoPromptCamera.stopPreview();
+        return;
+      }
+      setState(() => _preview = p);
+    } on PlatformException catch (e) {
+      if (e.code != 'cancelled' && mounted) setState(() => _error = '$e');
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
+    } finally {
+      _opening = false;
     }
   }
 
@@ -133,7 +151,24 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     if (_recording) return;
     _facing = _facing == CameraFacing.front ? CameraFacing.back : CameraFacing.front;
     final p = await EchoPromptCamera.switchCamera(_facing);
-    if (mounted) setState(() => _preview = p);
+    if (!mounted) {
+      EchoPromptCamera.stopPreview();
+      return;
+    }
+    setState(() => _preview = p);
+  }
+
+  /// Releases the camera while the app is in the background and reopens it on
+  /// return, so the camera is never held (or the privacy indicator lit) off screen.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      if (_preview == null) return;
+      EchoPromptCamera.stopPreview();
+      setState(() => _preview = null);
+    } else if (state == AppLifecycleState.resumed && _preview == null && _error == null && !_opening) {
+      _startPreview();
+    }
   }
 
   void _startTimer() =>
@@ -255,12 +290,14 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
 
   @override
   void dispose() {
+    // First, so nothing below can keep the camera open.
+    EchoPromptCamera.stopPreview();
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _events?.cancel();
-    ref.read(analyticsProvider).log('video_mode_exit', {'recordings_count': _recordings});
+    _analytics.log('video_mode_exit', {'recordings_count': _recordings});
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
-    EchoPromptCamera.stopPreview();
     super.dispose();
   }
 

@@ -45,6 +45,8 @@ class EchopromptCameraPlugin : FlutterPlugin, ActivityAware, MethodChannel.Metho
     private var cameraId = ""
     private var sensorOrientation = 0
     private var previewSize = android.util.Size(1920, 1080)
+    // Bumped by every stopPreview so a camera that finishes opening afterwards is closed, not leaked.
+    private var previewGen = 0
 
     private var audio: AudioCapture? = null
     private var recorder: Recorder? = null
@@ -66,21 +68,37 @@ class EchopromptCameraPlugin : FlutterPlugin, ActivityAware, MethodChannel.Metho
     }
 
     override fun onDetachedFromEngine(b: FlutterPlugin.FlutterPluginBinding) { teardown() }
-    override fun onAttachedToActivity(b: ActivityPluginBinding) {
-        activity = b.activity
-        b.activity.application.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
-            override fun onActivityPaused(a: Activity) { if (a == activity && recorder != null) finishRecording("interrupted") }
-            override fun onActivityCreated(a: Activity, s: Bundle?) {}
-            override fun onActivityStarted(a: Activity) {}
-            override fun onActivityResumed(a: Activity) {}
-            override fun onActivityStopped(a: Activity) {}
-            override fun onActivitySaveInstanceState(a: Activity, s: Bundle) {}
-            override fun onActivityDestroyed(a: Activity) {}
-        })
+    private val lifecycle = object : Application.ActivityLifecycleCallbacks {
+        override fun onActivityPaused(a: Activity) { if (a == activity && recorder != null) finishRecording("interrupted") }
+        override fun onActivityCreated(a: Activity, s: Bundle?) {}
+        // Release the microphone in the background; reopen it for a still-subscribed speech listener.
+        override fun onActivityStarted(a: Activity) { if (a == activity && audioSink != null) ensureAudio() }
+        override fun onActivityResumed(a: Activity) {}
+        override fun onActivityStopped(a: Activity) {
+            if (a == activity && recorder == null) { audio?.stop(); audio = null }
+        }
+        override fun onActivitySaveInstanceState(a: Activity, s: Bundle) {}
+        override fun onActivityDestroyed(a: Activity) {}
     }
-    override fun onDetachedFromActivity() { activity = null }
-    override fun onReattachedToActivityForConfigChanges(b: ActivityPluginBinding) { activity = b.activity }
-    override fun onDetachedFromActivityForConfigChanges() {}
+    private var lifecycleApp: Application? = null
+
+    private fun attach(act: Activity) {
+        activity = act
+        if (lifecycleApp == null) {
+            lifecycleApp = act.application.also { it.registerActivityLifecycleCallbacks(lifecycle) }
+        }
+    }
+
+    private fun detach() {
+        lifecycleApp?.unregisterActivityLifecycleCallbacks(lifecycle)
+        lifecycleApp = null
+        activity = null
+    }
+
+    override fun onAttachedToActivity(b: ActivityPluginBinding) = attach(b.activity)
+    override fun onDetachedFromActivity() = detach()
+    override fun onReattachedToActivityForConfigChanges(b: ActivityPluginBinding) = attach(b.activity)
+    override fun onDetachedFromActivityForConfigChanges() = detach()
 
     // MARK: Channel
 
@@ -145,6 +163,7 @@ class EchopromptCameraPlugin : FlutterPlugin, ActivityAware, MethodChannel.Metho
             .filter { it.width * 9 == it.height * 16 && it.height <= 1080 }
             .maxByOrNull { it.width } ?: map.getOutputSizes(SurfaceTexture::class.java).first()
 
+        val gen = previewGen
         val thread = HandlerThread("echoprompt-camera").also { it.start() }
         cameraThread = thread
         cameraHandler = Handler(thread.looper)
@@ -154,6 +173,12 @@ class EchopromptCameraPlugin : FlutterPlugin, ActivityAware, MethodChannel.Metho
         var replied = false
         mgr.openCamera(cameraId, object : CameraDevice.StateCallback() {
             override fun onOpened(device: CameraDevice) {
+                if (gen != previewGen) {
+                    // stopPreview ran while the camera was opening.
+                    device.close()
+                    if (!replied) { replied = true; main.post { result.error("cancelled", "Preview stopped", null) } }
+                    return
+                }
                 camera = device
                 createSession(listOf(Surface(e.surfaceTexture())))
                 val display = displayRotationDegrees()
@@ -174,9 +199,14 @@ class EchopromptCameraPlugin : FlutterPlugin, ActivityAware, MethodChannel.Metho
                     }
                 }
             }
-            override fun onDisconnected(d: CameraDevice) { d.close(); if (recorder != null) finishRecording("interrupted") }
+            override fun onDisconnected(d: CameraDevice) {
+                d.close()
+                if (camera === d) { camera = null; session = null }
+                if (recorder != null) main.post { finishRecording("interrupted") }
+            }
             override fun onError(d: CameraDevice, err: Int) {
                 d.close()
+                if (camera === d) { camera = null; session = null }
                 if (!replied) { replied = true; main.post { result.error("camera", "Camera error $err", null) } }
             }
         }, cameraHandler)
@@ -200,6 +230,7 @@ class EchopromptCameraPlugin : FlutterPlugin, ActivityAware, MethodChannel.Metho
     }
 
     private fun stopPreview() {
+        previewGen++
         if (recorder != null) finishRecording("user")
         session?.close(); session = null
         camera?.close(); camera = null
