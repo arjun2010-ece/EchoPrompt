@@ -127,6 +127,12 @@ class StudioNotifier extends Notifier<StudioState> {
     _saveTimer = Timer(const Duration(seconds: 1), flush);
   }
 
+  /// Replaces the script with [text] from an explicit Save and stores it at once.
+  Future<void> commitScript(String text) {
+    state = state.copyWith(script: text);
+    return flush();
+  }
+
   /// Saves pending edits now. Blank text and the untouched welcome text are
   /// placeholders, not scripts, so they are never saved.
   Future<void> flush() {

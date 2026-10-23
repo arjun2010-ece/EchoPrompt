@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/script/clean_script.dart';
 import '../../core/script/reading_time.dart';
 import '../../core/settings/labels.dart';
 import '../../core/settings/prompt_settings.dart';
+import '../../services/platform.dart';
 import '../../services/providers.dart';
 import '../../services/storage/script_io.dart';
+import '../../ui/discard_changes_dialog.dart';
 import '../read/read_screen.dart';
 import '../read/reading_settings.dart';
 import '../video/record_screen.dart';
@@ -237,7 +240,7 @@ class _EditorPage extends ConsumerWidget {
         IconButton(tooltip: 'Settings', icon: const Icon(Icons.tune), onPressed: () => showReadingSettings(context, app: true)),
         const SizedBox(width: 4),
       ]),
-      body: const _Editor(),
+      body: const _Editor(popOnDiscard: true),
     );
   }
 }
@@ -255,7 +258,19 @@ class _SplitStudioState extends ConsumerState<_SplitStudio> {
   /// pane never shows a blank text box next to a "New script" button.
   bool _editing = false;
 
+  /// Android: whether the editor holds unsaved edits.
+  final _draftDirty = ValueNotifier(false);
+
+  @override
+  void dispose() {
+    _draftDirty.dispose();
+    super.dispose();
+  }
+
   void _edit() => setState(() => _editing = true);
+
+  /// True when nothing unsaved would be lost, or the user agreed to lose it.
+  Future<bool> _canReplaceDraft() async => !_draftDirty.value || await confirmDiscardChanges(context);
 
   @override
   Widget build(BuildContext context) {
@@ -264,12 +279,14 @@ class _SplitStudioState extends ConsumerState<_SplitStudio> {
     ref.watch(studioProvider.select((s) => s.scriptRevision));
     final notifier = ref.read(studioProvider.notifier);
 
-    void newScript() {
+    Future<void> newScript() async {
+      if (!await _canReplaceDraft()) return;
       notifier.newScript();
       _edit();
     }
 
     Future<void> import() async {
+      if (!await _canReplaceDraft()) return;
       if (await _importScript(ref)) _edit();
     }
 
@@ -300,15 +317,18 @@ class _SplitStudioState extends ConsumerState<_SplitStudio> {
                   child: ScriptListBody(
                     history: history,
                     highlightCurrent: _editing,
-                    onOpen: (s) {
+                    onOpen: (s) async {
+                      if (!await _canReplaceDraft()) return;
                       notifier.load(s);
                       _edit();
                     },
-                    onOpenDemo: () {
+                    onOpenDemo: () async {
+                      if (!await _canReplaceDraft()) return;
                       notifier.loadDemo();
                       _edit();
                     },
-                    onRead: (s) {
+                    onRead: (s) async {
+                      if (!await _canReplaceDraft()) return;
                       notifier.load(s);
                       _edit();
                     },
@@ -338,7 +358,7 @@ class _SplitStudioState extends ConsumerState<_SplitStudio> {
                         IconButton(tooltip: 'Export script', icon: const Icon(Icons.ios_share), onPressed: () => _exportScript(ref)),
                       ]),
                     ),
-                    const Expanded(child: _Editor()),
+                    Expanded(child: _Editor(dirty: _draftDirty)),
                   ])
                 : _EmptyLibrary(
                     onNew: newScript,
@@ -360,8 +380,18 @@ class _SplitStudioState extends ConsumerState<_SplitStudio> {
 // --- Editor ---------------------------------------------------------------------------
 
 /// The script text plus a bar with its length and the two ways to present it.
+///
+/// On Android the text is a draft until Save: Save cleans it, stores it and enables Preview and
+/// Record; Cancel throws the edits away. Elsewhere typing saves as it goes.
 class _Editor extends ConsumerStatefulWidget {
-  const _Editor();
+  const _Editor({this.dirty, this.popOnDiscard = false});
+
+  /// Told whether the draft has unsaved edits.
+  final ValueNotifier<bool>? dirty;
+
+  /// Leaving with unsaved edits and agreeing to discard them also leaves the screen.
+  final bool popOnDiscard;
+
   @override
   ConsumerState<_Editor> createState() => _EditorState();
 }
@@ -371,8 +401,53 @@ class _EditorState extends ConsumerState<_Editor> {
 
   @override
   void dispose() {
+    widget.dirty?.value = false;
     _controller.dispose();
     super.dispose();
+  }
+
+  bool get _isDirty => isAndroid && _controller.text != ref.read(studioProvider).script;
+
+  void _publishDirty() => widget.dirty?.value = _isDirty;
+
+  void _edited(String text) {
+    if (!isAndroid) return ref.read(studioProvider.notifier).setScript(text);
+    setState(() {});
+    _publishDirty();
+  }
+
+  /// Puts the saved script back in the text box.
+  void _revert() {
+    _controller.text = ref.read(studioProvider).script;
+    FocusManager.instance.primaryFocus?.unfocus();
+    _publishDirty();
+    setState(() {});
+  }
+
+  Future<void> _save() async {
+    final cleaned = cleanScript(_controller.text);
+    if (cleaned.isEmpty) return;
+    _controller.value = TextEditingValue(
+      text: cleaned,
+      selection: TextSelection.collapsed(offset: _controller.selection.baseOffset.clamp(0, cleaned.length)),
+    );
+    FocusManager.instance.primaryFocus?.unfocus();
+    final saved = ref.read(studioProvider.notifier).commitScript(cleaned);
+    _publishDirty();
+    setState(() {});
+    await saved;
+  }
+
+  Future<void> _cancel() async {
+    if (await confirmDiscardChanges(context)) _revert();
+  }
+
+  Future<void> _leave(bool didPop) async {
+    if (didPop) return;
+    final navigator = Navigator.of(context);
+    if (!await confirmDiscardChanges(context)) return;
+    _revert();
+    if (widget.popOnDiscard) navigator.pop();
   }
 
   @override
@@ -380,41 +455,62 @@ class _EditorState extends ConsumerState<_Editor> {
     // A script replaced from outside the editor (open, new, import) reloads the text.
     ref.listen(studioProvider.select((s) => s.scriptRevision), (_, _) {
       _controller.text = ref.read(studioProvider).script;
+      _publishDirty();
     });
     // A script edited from a prompter screen comes back without a revision bump.
     ref.listen(studioProvider.select((s) => s.script), (_, script) {
       if (_controller.text != script) _controller.text = script;
+      _publishDirty();
     });
     final script = ref.watch(studioProvider.select((s) => s.script));
-    final notifier = ref.read(studioProvider.notifier);
+    final dirty = _isDirty;
     final theme = Theme.of(context);
     final empty = script.trim().isEmpty;
     final mode = ref.watch(settingsProvider.select((s) => s.mode));
     final audio = ref.watch(audioPathProvider);
     final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
 
-    return Column(children: [
+    return PopScope(
+      canPop: !dirty,
+      onPopInvokedWithResult: (didPop, _) => _leave(didPop),
+      child: Column(children: [
       Expanded(
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: _editorMaxWidth),
-            child: TextField(
-              controller: _controller,
-              autofocus: script.isEmpty,
-              maxLines: null,
-              expands: true,
-              textAlignVertical: TextAlignVertical.top,
-              textCapitalization: TextCapitalization.sentences,
-              keyboardType: TextInputType.multiline,
-              style: theme.textTheme.bodyLarge?.copyWith(fontSize: 19, height: 1.5),
-              onChanged: notifier.setScript,
-              decoration: InputDecoration(
-                border: InputBorder.none,
-                hintText: 'Write or paste your script…',
-                contentPadding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
-                hintStyle: TextStyle(color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.7)),
+            child: Column(children: [
+              if (isAndroid)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+                  child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                    TextButton(onPressed: dirty ? _cancel : null, child: const Text('Cancel')),
+                    const SizedBox(width: 8),
+                    FilledButton(
+                      onPressed: dirty && cleanScript(_controller.text).isNotEmpty ? _save : null,
+                      child: const Text('Save'),
+                    ),
+                  ]),
+                ),
+              Expanded(
+                child: TextField(
+                  controller: _controller,
+                  autofocus: script.isEmpty,
+                  maxLines: null,
+                  expands: true,
+                  textAlignVertical: TextAlignVertical.top,
+                  textCapitalization: TextCapitalization.sentences,
+                  keyboardType: TextInputType.multiline,
+                  style: theme.textTheme.bodyLarge?.copyWith(fontSize: 19, height: 1.5),
+                  onChanged: _edited,
+                  decoration: InputDecoration(
+                    border: InputBorder.none,
+                    hintText: 'Write or paste your script…',
+                    contentPadding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+                    hintStyle: TextStyle(color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.7)),
+                  ),
+                ),
               ),
-            ),
+            ]),
           ),
         ),
       ),
@@ -435,7 +531,7 @@ class _EditorState extends ConsumerState<_Editor> {
                   // Short, wide windows (a phone in landscape) keep the bar to one
                   // row so the script keeps most of the height.
                   final inline = c.maxWidth >= 520 && MediaQuery.sizeOf(context).height < 600;
-                  final stats = Text(_stats(script), style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant));
+                  final stats = Text(_stats(isAndroid ? _controller.text : script), style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant));
                   final modePicker = SegmentedButton<PromptControlMode>(
                     showSelectedIcon: false,
                     segments: [for (final m in PromptControlMode.values) ButtonSegment(value: m, label: Text(m.label))],
@@ -450,20 +546,20 @@ class _EditorState extends ConsumerState<_Editor> {
                     ),
                     onPressed: () async => ref.read(audioPathProvider.notifier).set(await ScriptIO.chooseAudio() ?? audio),
                   );
-                  final recordBlocked = empty || (mode == PromptControlMode.recordedAudio && audio == null);
+                  final recordBlocked = empty || dirty || (mode == PromptControlMode.recordedAudio && audio == null);
                   final actions = [
                     if (mode != PromptControlMode.normal)
                       _BarButton(
                         icon: Icons.visibility_outlined,
                         label: 'Preview',
-                        onPressed: empty ? null : () => _present(context, ref, record: false),
+                        onPressed: empty || dirty ? null : () => _present(context, ref, record: false),
                       ),
                     if (mode == PromptControlMode.normal)
                       _BarButton(
                         icon: Icons.play_arrow_rounded,
                         label: 'Read',
                         primary: true,
-                        onPressed: empty ? null : () => _present(context, ref, record: false),
+                        onPressed: empty || dirty ? null : () => _present(context, ref, record: false),
                       )
                     else
                       _BarButton(
@@ -520,7 +616,8 @@ class _EditorState extends ConsumerState<_Editor> {
           ),
         ),
       ),
-    ]);
+    ]),
+    );
   }
 }
 
