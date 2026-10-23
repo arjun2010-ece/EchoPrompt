@@ -20,6 +20,14 @@ abstract class SpeechEngine {
   Future<void> dispose();
 }
 
+/// The recogniser's running text for the current utterance. [isFinal] ends the
+/// utterance (a result, or the recogniser restarting without one).
+class SpeechHypothesis {
+  const SpeechHypothesis(this.text, {required this.isFinal});
+  final String text;
+  final bool isFinal;
+}
+
 class SpeechUnavailable implements Exception {
   SpeechUnavailable(this.message);
   final String message;

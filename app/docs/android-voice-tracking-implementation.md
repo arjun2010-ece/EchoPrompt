@@ -83,3 +83,18 @@ SpeechRecognizer (on-device, partials) --> SpeechChannel.kt --EventChannel--> Pr
   so there are no chunks to discard.
 * Pre-existing, left alone: `flutter analyze` reports `depend_on_referenced_packages` for
   `tools/voice_latency/voice_latency_test.dart`.
+
+## Record screen behaviour (Android, Voice mode)
+
+* The prompter overlay spans the full screen width (no side margins; only its bottom corners are rounded).
+* The microphone listens from the moment the screen opens and is switched only by the play/pause button in the control
+  bar. Record, pause/resume recording, stop and the close-while-recording dialog no longer start or stop it
+  (`_micIsIndependent` in `record_screen.dart`). Editing the script keeps the mic as it was; switching to Voice turns it on;
+  it is released when the app goes to the background and resumes on return. Audio and Normal modes and other platforms are
+  unchanged.
+* Fixed: `EXTRA_SEGMENTED_SESSION` is a string naming what ends a segment (the reference passes the silence-length extra's
+  name); the first version passed `true`, which the recogniser ignores, so sessions were not segmented.
+* Checked: `flutter analyze` and a debug build. Not run on a device or emulator (none was available).
+
+See `android-voice-jump-ahead-analysis.md` for why the highlight can run ahead of the speaker.
+

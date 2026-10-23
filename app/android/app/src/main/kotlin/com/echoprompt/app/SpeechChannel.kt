@@ -28,6 +28,7 @@ class SpeechChannel(private val context: Context, messenger: BinaryMessenger) :
     private var recognizer: SpeechRecognizer? = null
     private var listening = false
     private var bias = arrayListOf<String>()
+    private var lastIntent: Intent? = null
 
     private val restart = Runnable { startSession() }
 
@@ -103,14 +104,29 @@ class SpeechChannel(private val context: Context, messenger: BinaryMessenger) :
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, SILENCE_MS)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, SILENCE_MS)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                // One session keeps listening across pauses and reports each phrase as a segment.
-                putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, true)
+                // One session keeps listening across pauses and reports each phrase as a segment. The
+                // value names what ends a segment (here, the silence length above), not a boolean.
+                putExtra(
+                    RecognizerIntent.EXTRA_SEGMENTED_SESSION,
+                    RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
+                )
                 putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, bias)
             }
         }
+        lastIntent = intent
         main.removeCallbacks(watchdog)
         main.postDelayed(watchdog, WATCHDOG_MS)
         r.startListening(intent)
+    }
+
+    /** The offline pack is missing: ask the speech service to download it so a later session can use it. */
+    private fun downloadModel() {
+        val intent = lastIntent ?: return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        try {
+            recognizer?.triggerModelDownload(intent)
+        } catch (_: Exception) {
+        }
     }
 
     private fun scheduleRestart(delayMs: Long) {
@@ -156,8 +172,10 @@ class SpeechChannel(private val context: Context, messenger: BinaryMessenger) :
             when (error) {
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
                     fail("permission", "Microphone access is needed for Voice control")
-                ERROR_LANGUAGE_NOT_SUPPORTED, ERROR_LANGUAGE_UNAVAILABLE ->
+                ERROR_LANGUAGE_NOT_SUPPORTED, ERROR_LANGUAGE_UNAVAILABLE -> {
+                    downloadModel()
                     fail("language", "English on-device speech recognition isn't installed")
+                }
                 else -> {
                     // Nothing heard, or the recogniser dropped the session: close the utterance and go again.
                     emit("", true)

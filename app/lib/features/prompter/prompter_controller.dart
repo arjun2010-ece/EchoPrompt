@@ -12,6 +12,7 @@ import '../../core/script/text.dart';
 import '../../core/settings/prompt_settings.dart';
 import '../../services/audio/audio_input.dart';
 import '../../services/audio/reference_clock.dart';
+import '../../services/platform.dart';
 import '../../services/speech/android_speech_recognizer.dart';
 import '../../services/speech/sherpa_speech_engine.dart';
 import '../../services/speech/speech_engine.dart';
@@ -241,9 +242,15 @@ class PrompterController extends Notifier<PrompterState> {
         samples = input.start();
       }
       state = state.copyWith(playing: true, status: 'Listening');
-      _voiceSub = engine.listen(samples).listen(_onWords, onError: (Object e) {
-        state = state.copyWith(playing: false, status: '$e');
-      });
+      void failed(Object e) => state = state.copyWith(playing: false, status: '$e');
+      if (isAndroid && engine is SherpaSpeechEngine) {
+        // Android follows the speaker with one tracker whichever recogniser runs.
+        _lastHypothesis = '';
+        _tracker?.syncTo(state.progress.confirmedWordIndex);
+        _voiceSub = engine.hypotheses(samples).listen(_onHypothesis, onError: failed);
+      } else {
+        _voiceSub = engine.listen(samples).listen(_onWords, onError: failed);
+      }
     } on SpeechUnavailable catch (e) {
       state = state.copyWith(playing: false, status: e.message);
     }
@@ -356,7 +363,7 @@ class PrompterController extends Notifier<PrompterState> {
       tracker.endUtterance();
       _lastHypothesis = '';
       final native = ref.read(androidSpeechProvider);
-      if (native != null) unawaited(_sendBias(native));
+      if (native != null && _nativeVoice) unawaited(_sendBias(native));
     }
   }
 

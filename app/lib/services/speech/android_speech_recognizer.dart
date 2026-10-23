@@ -2,14 +2,6 @@ import 'package:flutter/services.dart';
 
 import 'speech_engine.dart';
 
-/// The recogniser's running text for the current utterance. [isFinal] ends the
-/// utterance (a result, or the recogniser restarting without one).
-class SpeechHypothesis {
-  const SpeechHypothesis(this.text, {required this.isFinal});
-  final String text;
-  final bool isFinal;
-}
-
 /// Android's on-device `SpeechRecognizer` (API 31+), which reports partial results as the
 /// speaker talks. It listens to the microphone itself. Never uploads audio: when no
 /// on-device recogniser is installed [isAvailable] is false and callers fall back.
