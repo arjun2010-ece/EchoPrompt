@@ -1,15 +1,18 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/matching/audio_aligner.dart';
+import '../../core/matching/script_tracker.dart';
 import '../../core/matching/voice_matcher.dart';
 import '../../core/progress/reading_progress.dart';
 import '../../core/script/text.dart';
 import '../../core/settings/prompt_settings.dart';
 import '../../services/audio/audio_input.dart';
 import '../../services/audio/reference_clock.dart';
+import '../../services/speech/android_speech_recognizer.dart';
 import '../../services/speech/sherpa_speech_engine.dart';
 import '../../services/speech/speech_engine.dart';
 
@@ -18,6 +21,12 @@ final speechEngineProvider = Provider<SpeechEngine>((ref) {
   ref.onDispose(e.dispose);
   return e;
 });
+
+/// Voice mode's recogniser on Android; null elsewhere. Used only when the device has an
+/// on-device recogniser, otherwise Voice mode runs on [speechEngineProvider].
+final androidSpeechProvider = Provider<AndroidSpeechRecognizer?>(
+  (_) => Platform.isAndroid ? AndroidSpeechRecognizer() : null,
+);
 final audioInputProvider = Provider<AudioInput>((_) => RecordAudioInput());
 
 /// Builds the clock for a take; overridden in tests.
@@ -85,7 +94,12 @@ class PrompterController extends Notifier<PrompterState> {
   String _script = '';
   PromptControlMode _mode = PromptControlMode.normal;
   VoiceMatcher? _matcher;
-  StreamSubscription<List<String>>? _voiceSub;
+  ScriptTracker? _tracker;
+  StreamSubscription<Object?>? _voiceSub;
+  bool _nativeVoice = false;
+  bool _nativeUnusable = false;
+  String _lastHypothesis = '';
+  final _trackerClock = Stopwatch()..start();
   Timer? _clockTimer;
   Timer? _lostTimer;
   static const _lostAfter = Duration(seconds: 4);
@@ -118,6 +132,8 @@ class PrompterController extends Notifier<PrompterState> {
     _mode = mode;
     _wordCount = scriptWords(script).length;
     _matcher = VoiceMatcher(script);
+    _tracker = ScriptTracker(scriptWords(script));
+    _nativeUnusable = false;
     state = PrompterState(resetToken: state.resetToken + 1);
     _externalSamples = externalSamples;
     _audible = audible;
@@ -129,6 +145,17 @@ class PrompterController extends Notifier<PrompterState> {
   /// seconds (and the first spoken words) on it. Loading blocks the UI thread briefly, so
   /// call it once the screen is on display, not while its route is still animating in.
   void warmUpVoice() {
+    final native = ref.read(androidSpeechProvider);
+    if (native == null) return _warmUpSherpa();
+    unawaited(() async {
+      try {
+        if (await native.isAvailable()) return await native.warmUp();
+      } catch (_) {}
+      _warmUpSherpa();
+    }());
+  }
+
+  void _warmUpSherpa() {
     final engine = ref.read(speechEngineProvider);
     if (engine is SherpaSpeechEngine) unawaited(engine.warmUp().catchError((Object _) {}));
   }
@@ -197,6 +224,8 @@ class PrompterController extends Notifier<PrompterState> {
   // --- Voice ---------------------------------------------------------------
 
   Future<void> _startVoice() async {
+    final native = ref.read(androidSpeechProvider);
+    if (native != null && !_nativeUnusable && await _safeAvailable(native)) return _startNativeVoice(native);
     final engine = ref.read(speechEngineProvider);
     try {
       await engine.init();
@@ -220,11 +249,59 @@ class PrompterController extends Notifier<PrompterState> {
     }
   }
 
+  Future<bool> _safeAvailable(AndroidSpeechRecognizer native) async {
+    try {
+      return await native.isAvailable();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Voice mode on the platform recogniser: it reports the whole running hypothesis, which
+  /// [ScriptTracker] follows on every change. It records the microphone itself.
+  Future<void> _startNativeVoice(AndroidSpeechRecognizer native) async {
+    if (!await _input.hasPermission()) {
+      state = state.copyWith(status: 'Microphone access is needed for Voice control');
+      return;
+    }
+    _nativeVoice = true;
+    _lastHypothesis = '';
+    _tracker?.syncTo(state.progress.confirmedWordIndex);
+    await _sendBias(native);
+    state = state.copyWith(playing: true, status: 'Listening');
+    _voiceSub = native.hypotheses().listen(_onHypothesis, onError: (Object e) {
+      final sub = _voiceSub;
+      _nativeVoice = false;
+      _voiceSub = null;
+      unawaited(sub?.cancel());
+      if (e is NativeRecognizerUnavailable) {
+        // `isAvailable` can be true while the English pack is still missing: use sherpa.
+        _nativeUnusable = true;
+        unawaited(_startVoice());
+        return;
+      }
+      state = state.copyWith(playing: false, status: '$e');
+    });
+  }
+
+  Future<void> _sendBias(AndroidSpeechRecognizer native) async {
+    final words = _tracker?.biasingWords();
+    if (words == null) return;
+    try {
+      await native.setBias(words);
+    } catch (_) {}
+  }
+
   Future<void> _stopVoice() async {
     // Only touch the microphone if Voice mode actually opened it.
     final sub = _voiceSub;
     if (sub == null) return;
     _voiceSub = null;
+    if (_nativeVoice) {
+      _nativeVoice = false;
+      await sub.cancel(); // stops the recogniser, which owns its microphone
+      return;
+    }
     // The recognizer's generator only finishes cancelling once the sample
     // stream ends, so don't await it before closing the microphone.
     unawaited(sub.cancel());
@@ -248,6 +325,39 @@ class PrompterController extends Notifier<PrompterState> {
       lost: false,
       finished: next >= _wordCount - 1,
     );
+  }
+
+  void _onHypothesis(SpeechHypothesis h) {
+    final tracker = _tracker;
+    if (tracker == null) return;
+    if (h.text != _lastHypothesis) {
+      _lastHypothesis = h.text;
+      tracker.syncTo(state.progress.confirmedWordIndex);
+      final moved = tracker.update(h.text, _trackerClock.elapsedMilliseconds);
+      if (moved == null) {
+        // Speech that keeps not matching means the reader is out of step.
+        if (h.text.trim().isNotEmpty && !state.lost) {
+          _lostTimer ??= Timer(_lostAfter, () => state = state.copyWith(lost: true));
+        }
+      } else {
+        _clearLost();
+        final confirmed = tracker.lastMatched;
+        state = state.copyWith(
+          progress: PromptReadingProgress.synchronized(
+            confirmed: confirmed,
+            predicted: confirmed + 1 < _wordCount ? confirmed + 1 : null,
+          ),
+          lost: false,
+          finished: moved >= _wordCount,
+        );
+      }
+    }
+    if (h.isFinal) {
+      tracker.endUtterance();
+      _lastHypothesis = '';
+      final native = ref.read(androidSpeechProvider);
+      if (native != null) unawaited(_sendBias(native));
+    }
   }
 
   void _clearLost() {
