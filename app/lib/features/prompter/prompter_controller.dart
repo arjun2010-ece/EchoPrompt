@@ -22,8 +22,8 @@ final speechEngineProvider = Provider<SpeechEngine>((ref) {
   return e;
 });
 
-/// Voice mode's recogniser on Android; null elsewhere. Used only when the device has an
-/// on-device recogniser, otherwise Voice mode runs on [speechEngineProvider].
+/// Voice and Audio mode's recogniser on Android; null elsewhere. Android never uses
+/// [speechEngineProvider]: a phone without a recogniser is told so.
 final androidSpeechProvider = Provider<AndroidSpeechRecognizer?>(
   (_) => Platform.isAndroid ? AndroidSpeechRecognizer() : null,
 );
@@ -140,7 +140,8 @@ class PrompterController extends Notifier<PrompterState> {
     _tracker = ScriptTracker(scriptWords(script));
     state = PrompterState(resetToken: state.resetToken + 1);
     _externalSamples = externalSamples;
-    _audible = audible;
+    // Android Audio mode follows the file by listening to it, so it must be heard.
+    _audible = audible || (_androidAudio);
     _audioPath = audioPath;
     if (mode == PromptControlMode.recordedAudio) await _prepareAudio();
   }
@@ -158,6 +159,10 @@ class PrompterController extends Notifier<PrompterState> {
     if (engine is SherpaSpeechEngine) unawaited(engine.warmUp().catchError((Object _) {}));
   }
 
+  /// Android Audio mode: the file plays out loud and the recogniser follows it through the microphone,
+  /// exactly as it follows a reader in Voice mode (no transcription of the file).
+  bool get _androidAudio => _mode == PromptControlMode.recordedAudio && ref.read(androidSpeechProvider) != null;
+
   Stream<Float32List>? _externalSamples;
   bool _audible = true;
   String? _audioPath;
@@ -172,6 +177,15 @@ class PrompterController extends Notifier<PrompterState> {
         await _startVoice();
       case PromptControlMode.recordedAudio:
         final clock = _clock;
+        if (_androidAudio) {
+          if (clock == null) return;
+          // Listening first, so the recogniser is up as the audio starts; if it can't, nothing plays.
+          await _startVoice();
+          if (!state.playing) return;
+          state = state.copyWith(finished: false);
+          unawaited(clock.play());
+          return;
+        }
         if (clock == null || _timed.isEmpty) return;
         // just_audio's play() future only completes on pause/end, so don't await it
         // before publishing the playing state.
@@ -191,6 +205,7 @@ class PrompterController extends Notifier<PrompterState> {
         await _clock?.pause();
         _clockTimer?.cancel();
         _clockTimer = null;
+        await _stopVoice(); // Android Audio mode listens; elsewhere this does nothing
     }
     _clearLost();
     state = state.copyWith(playing: false, lost: false);
@@ -279,6 +294,7 @@ class PrompterController extends Notifier<PrompterState> {
       _nativeVoice = false;
       _voiceSub = null;
       unawaited(sub?.cancel());
+      if (_mode == PromptControlMode.recordedAudio) unawaited(_clock?.pause());
       if (e is NativeRecognizerUnavailable) {
         // `isAvailable` can be true while the English pack is still missing.
         _voiceUnsupported(e.message);
@@ -374,6 +390,7 @@ class PrompterController extends Notifier<PrompterState> {
       state = state.copyWith(status: 'Choose an audio file');
       return;
     }
+    if (_androidAudio) return _prepareAndroidAudio(path);
     state = state.copyWith(preparing: true, status: 'Synchronizing audio…');
     try {
       final engine = ref.read(speechEngineProvider);
@@ -402,6 +419,26 @@ class PrompterController extends Notifier<PrompterState> {
       state = state.copyWith(preparing: false, status: e.message);
     } catch (_) {
       state = state.copyWith(preparing: false, status: 'Could not synchronize this audio file');
+    }
+  }
+
+  /// Android: only loads the file to play it; following it is the recogniser's job at Play.
+  Future<void> _prepareAndroidAudio(String path) async {
+    state = state.copyWith(preparing: true, status: 'Loading audio…');
+    try {
+      final clock = ref.read(referenceClockFactoryProvider)(audible: true);
+      await clock.load(path);
+      _clock = clock;
+      clock.completed.listen((_) async {
+        // The recogniser is still finishing the last words.
+        await Future<void>.delayed(const Duration(milliseconds: 1500));
+        if (_clock != clock || !state.playing || clock.isPlaying) return;
+        await pause();
+        state = state.copyWith(finished: true, status: 'Finished');
+      });
+      state = state.copyWith(preparing: false, status: 'Ready — press Play');
+    } catch (_) {
+      state = state.copyWith(preparing: false, status: 'Could not load this audio file');
     }
   }
 

@@ -503,11 +503,14 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
               }),
               itemBuilder: (_) => [
                 CheckedPopupMenuItem(value: 'countdown', checked: _useCountdown, child: const Text('3-2-1 countdown')),
+                // Android Audio mode is followed through the microphone, so the audio always plays out loud.
+                if (!(isAndroid && ref.read(settingsProvider).mode == PromptControlMode.recordedAudio)) ...[
                 const PopupMenuDivider(),
                 const PopupMenuItem(enabled: false, child: Text('Reference audio plays through')),
                 CheckedPopupMenuItem(value: 'headphones', checked: _route == ReferenceRoute.headphones, child: const Text('Headphones (not in the video)')),
                 CheckedPopupMenuItem(value: 'silent', checked: _route == ReferenceRoute.silent, child: const Text('Silent pacing (not in the video)')),
                 CheckedPopupMenuItem(value: 'speaker', checked: _route == ReferenceRoute.speaker, child: const Text('Speaker (in the video)')),
+                ],
               ],
             ),
               ),
