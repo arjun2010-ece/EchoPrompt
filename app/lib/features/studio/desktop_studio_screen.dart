@@ -274,6 +274,7 @@ class _ScriptList extends ConsumerWidget {
                 onPicked();
               },
               menuItems: () => [
+                const PopupMenuItem(value: 'edit', child: Text('Edit')),
                 const PopupMenuItem(value: 'duplicate', child: Text('Duplicate')),
                 PopupMenuItem(
                   value: 'reveal',
@@ -284,6 +285,9 @@ class _ScriptList extends ConsumerWidget {
               ],
               onMenu: (s, action) {
                 switch (action) {
+                  case 'edit':
+                    notifier.load(s);
+                    onPicked();
                   case 'duplicate':
                     notifier.duplicate(s);
                   case 'reveal':

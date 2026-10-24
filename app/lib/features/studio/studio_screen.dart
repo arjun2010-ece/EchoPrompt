@@ -158,8 +158,22 @@ class _LibraryPage extends ConsumerWidget {
                   notifier.load(s);
                   _openEditor(context);
                 },
-                menuItems: () => const [PopupMenuItem(value: 'delete', child: Text('Delete'))],
-                onMenu: (s, _) => confirmDeleteScripts(context, ref, [s]),
+                menuItems: () => [
+                  const PopupMenuItem(value: 'edit', child: _MenuLabel(Icons.edit_outlined, 'Edit')),
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: _MenuLabel(Icons.delete_outline, 'Delete', color: Theme.of(context).colorScheme.error),
+                  ),
+                ],
+                onMenu: (s, action) {
+                  switch (action) {
+                    case 'edit':
+                      notifier.load(s);
+                      _openEditor(context);
+                    case 'delete':
+                      confirmDeleteScripts(context, ref, [s]);
+                  }
+                },
               ),
             ),
           ),
@@ -177,6 +191,24 @@ class _LibraryPage extends ConsumerWidget {
               label: const Text('New script'),
             ),
     );
+  }
+}
+
+/// An icon and a label, so the row menu's entries read at a glance.
+class _MenuLabel extends StatelessWidget {
+  const _MenuLabel(this.icon, this.label, {this.color});
+
+  final IconData icon;
+  final String label;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: [
+      Icon(icon, size: 20, color: color ?? Theme.of(context).colorScheme.onSurfaceVariant),
+      const SizedBox(width: 12),
+      Text(label, style: color == null ? null : TextStyle(color: color)),
+    ]);
   }
 }
 
