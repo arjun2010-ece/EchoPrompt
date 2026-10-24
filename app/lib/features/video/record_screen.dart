@@ -17,6 +17,7 @@ import '../prompter/prompt_view.dart';
 import '../prompter/prompter_controller.dart';
 import '../read/reading_settings.dart';
 import '../read/script_editor_sheet.dart';
+import '../../ui/voice_unsupported_dialog.dart';
 
 /// R2: in-app camera (front/back) with the prompter overlay docked at the
 /// top, in portrait and landscape. The prompter is a UI overlay only and is
@@ -46,6 +47,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
   bool _micWasOn = false;
   // Cached because `ref` can't be read in dispose().
   late final AnalyticsService _analytics;
+  late final PrompterController _prompter;
   static const _pausedColor = Colors.amber;
 
   // Overlay height as a fraction of the screen, remembered per orientation.
@@ -64,6 +66,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
     WidgetsBinding.instance.addObserver(this);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _analytics = ref.read(analyticsProvider);
+    _prompter = ref.read(prompterProvider.notifier);
     _analytics.log('video_mode_enter');
     _init();
   }
@@ -318,6 +321,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _events?.cancel();
+    // Android: the play button alone switches the microphone here, so leaving the screen must switch it off.
+    if (isAndroid) Future.microtask(_prompter.pause);
     _analytics.log('video_mode_exit', {'recordings_count': _recordings});
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
@@ -333,6 +338,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
       if (_recording) return;
       if (mode == PromptControlMode.recordedAudio) _route = ReferenceRoute.speaker;
       _beginPrompter(listen: true);
+    });
+    ref.listen(prompterProvider.select((p) => p.voiceUnsupported), (_, unsupported) {
+      if (unsupported) showVoiceUnsupportedDialog(context);
     });
     final media = MediaQuery.of(context);
     final landscape = media.orientation == Orientation.landscape;

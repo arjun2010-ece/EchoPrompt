@@ -103,6 +103,20 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
     _ticker = createTicker(_tick)..start();
   }
 
+  /// Starts the frame ticker if it went to sleep; a new run's clock starts at zero.
+  void _wake() {
+    if (_ticker.isActive || widget.isPreview) return;
+    _last = Duration.zero;
+    _ticker.start();
+  }
+
+  /// Android: nothing is moving, so stop asking for frames. A running ticker redraws the
+  /// whole prompter every frame (most of a CPU core on the emulator), which starves the
+  /// speech recogniser. The reference's text view only draws when something changes.
+  void _sleep() {
+    if (isAndroid) _ticker.stop();
+  }
+
   @override
   void dispose() {
     _ticker.dispose();
@@ -131,12 +145,13 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
   void _tick(Duration now) {
     final dt = math.min(0.1, (now - _last).inMicroseconds / 1e6);
     _last = now;
-    if (widget.isPreview || !_scroll.hasClients) return;
+    if (widget.isPreview) return _sleep();
+    if (!_scroll.hasClients) return;
     final settings = ref.read(settingsProvider);
     final pr = ref.read(prompterProvider);
     final max = _scroll.position.maxScrollExtent;
     if (settings.mode == PromptControlMode.normal) {
-      if (!pr.playing) return;
+      if (!pr.playing) return _sleep();
       _offset += settings.speed * dt;
       if (_offset >= max) {
         _offset = max;
@@ -147,7 +162,7 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
       final settle = settings.mode == PromptControlMode.voice ? 0.25 : 0.38;
       _offset += (_followTarget - _offset) * (1 - math.exp(-dt / settle));
     } else {
-      return;
+      return _sleep();
     }
     _scroll.jumpTo(_offset.clamp(0.0, max).toDouble());
     _reportReadingWord(now.inMicroseconds / 1e6);
@@ -174,6 +189,7 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
     final preview = widget.isPreview;
     final pr = preview ? const PrompterState() : ref.watch(prompterProvider);
     if (!preview) _syncWakelock(pr.playing);
+    if (!preview && settings.mode == PromptControlMode.normal && pr.playing) _wake();
     if (!preview && pr.resetToken != _resetToken) {
       _resetToken = pr.resetToken;
       WidgetsBinding.instance.addPostFrameCallback((_) => _reset());
@@ -245,6 +261,7 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
         final confirmed = pr.progress.confirmedWordIndex;
         _followTarget = confirmed < _lastConfirmed ? target : math.max(_followTarget, target);
         _lastConfirmed = confirmed;
+        if ((_followTarget - _offset).abs() > 0.05) _wake();
       }
 
       Widget text = Text.rich(

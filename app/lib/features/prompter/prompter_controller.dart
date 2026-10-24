@@ -12,7 +12,6 @@ import '../../core/script/text.dart';
 import '../../core/settings/prompt_settings.dart';
 import '../../services/audio/audio_input.dart';
 import '../../services/audio/reference_clock.dart';
-import '../../services/platform.dart';
 import '../../services/speech/android_speech_recognizer.dart';
 import '../../services/speech/sherpa_speech_engine.dart';
 import '../../services/speech/speech_engine.dart';
@@ -52,6 +51,7 @@ class PrompterState {
     this.status = '',
     this.finished = false,
     this.lost = false,
+    this.voiceUnsupported = false,
     this.resetToken = 0,
   });
   final PromptReadingProgress progress;
@@ -64,6 +64,10 @@ class PrompterState {
   /// few seconds. Cleared as soon as the highlight moves.
   final bool lost;
 
+  /// Android Voice mode: this device has no on-device speech recognition to follow the reader
+  /// with. The Read and Record screens tell the reader once each time this turns on.
+  final bool voiceUnsupported;
+
   /// Bumped by [PrompterController.begin] and restart; the text surface resets
   /// its scroll position when it changes.
   final int resetToken;
@@ -75,6 +79,7 @@ class PrompterState {
     String? status,
     bool? finished,
     bool? lost,
+    bool? voiceUnsupported,
     int? resetToken,
   }) => PrompterState(
     progress: progress ?? this.progress,
@@ -83,6 +88,7 @@ class PrompterState {
     status: status ?? this.status,
     finished: finished ?? this.finished,
     lost: lost ?? this.lost,
+    voiceUnsupported: voiceUnsupported ?? this.voiceUnsupported,
     resetToken: resetToken ?? this.resetToken,
   );
 }
@@ -98,8 +104,6 @@ class PrompterController extends Notifier<PrompterState> {
   ScriptTracker? _tracker;
   StreamSubscription<Object?>? _voiceSub;
   bool _nativeVoice = false;
-  bool _nativeUnusable = false;
-  String _lastHypothesis = '';
   final _trackerClock = Stopwatch()..start();
   Timer? _clockTimer;
   Timer? _lostTimer;
@@ -134,7 +138,6 @@ class PrompterController extends Notifier<PrompterState> {
     _wordCount = scriptWords(script).length;
     _matcher = VoiceMatcher(script);
     _tracker = ScriptTracker(scriptWords(script));
-    _nativeUnusable = false;
     state = PrompterState(resetToken: state.resetToken + 1);
     _externalSamples = externalSamples;
     _audible = audible;
@@ -145,15 +148,9 @@ class PrompterController extends Notifier<PrompterState> {
   /// Loads the speech model before Voice mode's Start, so Start doesn't spend its first
   /// seconds (and the first spoken words) on it. Loading blocks the UI thread briefly, so
   /// call it once the screen is on display, not while its route is still animating in.
+  /// Android's platform recogniser needs none: like the reference, it is created at Start.
   void warmUpVoice() {
-    final native = ref.read(androidSpeechProvider);
-    if (native == null) return _warmUpSherpa();
-    unawaited(() async {
-      try {
-        if (await native.isAvailable()) return await native.warmUp();
-      } catch (_) {}
-      _warmUpSherpa();
-    }());
+    if (ref.read(androidSpeechProvider) == null) _warmUpSherpa();
   }
 
   void _warmUpSherpa() {
@@ -226,7 +223,12 @@ class PrompterController extends Notifier<PrompterState> {
 
   Future<void> _startVoice() async {
     final native = ref.read(androidSpeechProvider);
-    if (native != null && !_nativeUnusable && await _safeAvailable(native)) return _startNativeVoice(native);
+    if (native != null) {
+      // Android has no other recogniser: a device without on-device speech recognition is told so.
+      state = state.copyWith(voiceUnsupported: false);
+      if (await _safeAvailable(native)) return _startNativeVoice(native);
+      return _voiceUnsupported('Speech recognition is not available on this device');
+    }
     final engine = ref.read(speechEngineProvider);
     try {
       await engine.init();
@@ -243,18 +245,14 @@ class PrompterController extends Notifier<PrompterState> {
       }
       state = state.copyWith(playing: true, status: 'Listening');
       void failed(Object e) => state = state.copyWith(playing: false, status: '$e');
-      if (isAndroid && engine is SherpaSpeechEngine) {
-        // Android follows the speaker with one tracker whichever recogniser runs.
-        _lastHypothesis = '';
-        _tracker?.syncTo(state.progress.confirmedWordIndex);
-        _voiceSub = engine.hypotheses(samples).listen(_onHypothesis, onError: failed);
-      } else {
-        _voiceSub = engine.listen(samples).listen(_onWords, onError: failed);
-      }
+      _voiceSub = engine.listen(samples).listen(_onWords, onError: failed);
     } on SpeechUnavailable catch (e) {
       state = state.copyWith(playing: false, status: e.message);
     }
   }
+
+  void _voiceUnsupported(String message) =>
+      state = state.copyWith(playing: false, status: message, voiceUnsupported: true);
 
   Future<bool> _safeAvailable(AndroidSpeechRecognizer native) async {
     try {
@@ -272,19 +270,18 @@ class PrompterController extends Notifier<PrompterState> {
       return;
     }
     _nativeVoice = true;
-    _lastHypothesis = '';
     _tracker?.syncTo(state.progress.confirmedWordIndex);
     await _sendBias(native);
-    state = state.copyWith(playing: true, status: 'Listening');
-    _voiceSub = native.hypotheses().listen(_onHypothesis, onError: (Object e) {
+    state = state.copyWith(playing: true, status: 'Listening', voiceUnsupported: false);
+    // The Record screen records the microphone, so the recogniser may not open it itself (reference: Video mode).
+    _voiceSub = native.hypotheses(micFallback: _externalSamples == null).listen(_onHypothesis, onError: (Object e) {
       final sub = _voiceSub;
       _nativeVoice = false;
       _voiceSub = null;
       unawaited(sub?.cancel());
       if (e is NativeRecognizerUnavailable) {
-        // `isAvailable` can be true while the English pack is still missing: use sherpa.
-        _nativeUnusable = true;
-        unawaited(_startVoice());
+        // `isAvailable` can be true while the English pack is still missing.
+        _voiceUnsupported(e.message);
         return;
       }
       state = state.copyWith(playing: false, status: '$e');
@@ -334,18 +331,16 @@ class PrompterController extends Notifier<PrompterState> {
     );
   }
 
+  /// Every recogniser result goes to the tracker, as the reference does (`ud.q`); blank ones carry nothing.
   void _onHypothesis(SpeechHypothesis h) {
     final tracker = _tracker;
     if (tracker == null) return;
-    if (h.text != _lastHypothesis) {
-      _lastHypothesis = h.text;
+    if (h.text.trim().isNotEmpty) {
       tracker.syncTo(state.progress.confirmedWordIndex);
       final moved = tracker.update(h.text, _trackerClock.elapsedMilliseconds);
       if (moved == null) {
         // Speech that keeps not matching means the reader is out of step.
-        if (h.text.trim().isNotEmpty && !state.lost) {
-          _lostTimer ??= Timer(_lostAfter, () => state = state.copyWith(lost: true));
-        }
+        if (!state.lost) _lostTimer ??= Timer(_lostAfter, () => state = state.copyWith(lost: true));
       } else {
         _clearLost();
         final confirmed = tracker.lastMatched;
@@ -361,7 +356,6 @@ class PrompterController extends Notifier<PrompterState> {
     }
     if (h.isFinal) {
       tracker.endUtterance();
-      _lastHypothesis = '';
       final native = ref.read(androidSpeechProvider);
       if (native != null && _nativeVoice) unawaited(_sendBias(native));
     }

@@ -11,6 +11,7 @@ import '../prompter/prompt_surface.dart';
 import '../prompter/prompter_controller.dart';
 import '../prompter/tracking_status.dart';
 import 'reading_settings.dart';
+import '../../ui/voice_unsupported_dialog.dart';
 import 'script_editor_sheet.dart';
 
 /// Window width from which the reader uses its roomy tablet layout.
@@ -126,6 +127,9 @@ class _ReadScreenState extends ConsumerState<ReadScreen> {
       );
     });
     ref.listen(prompterProvider.select((p) => p.playing), (_, playing) => _syncChrome(playing));
+    ref.listen(prompterProvider.select((p) => p.voiceUnsupported), (_, unsupported) {
+      if (unsupported) showVoiceUnsupportedDialog(context);
+    });
 
     return Scaffold(
       backgroundColor: promptBackground,

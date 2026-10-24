@@ -1,5 +1,9 @@
 # Android voice tracking: implementation notes
 
+> **Superseded in parts:** the recogniser's session handling, the sherpa fallback and the 2 s watchdog described below were
+> replaced by the reference's engine, and Android Voice mode no longer falls back to sherpa. See
+> `android-voice-reference-parity.md`.
+
 Implements `voice-tracking-handoff.md` for Voice mode on Android only. iOS, macOS, Windows and the
 Recorded-audio mode are unchanged and still use sherpa-onnx.
 
@@ -44,13 +48,12 @@ SpeechRecognizer (on-device, partials) --> SpeechChannel.kt --EventChannel--> Pr
   set when the cursor passes the last word (so trailing punctuation-only entries don't block it). The
   "lost" timer works as before.
 * **Fallback.** If the device has no on-device recogniser (API < 31, or the offline English pack isn't
-  installed) `isAvailable()` is false and Voice mode runs the existing sherpa path unchanged. Audio is never sent
-  to a server, per the on-device decision in `SPEECH_ENGINE_DECISION.md`.
+  installed) `isAvailable()` is false and Voice mode runs the existing sherpa path unchanged. (Superseded: Android Voice mode now uses the
+  system recogniser as a fallback, which may use the network.)
   `isAvailable()` can still be true while Google's English pack isn't downloaded (seen on an API 37 emulator:
   recogniser error 13, `LANGUAGE_PACK_ERROR`). That error (and 12) is raised as `NativeRecognizerUnavailable`;
   the controller then restarts Voice mode on sherpa for the rest of the session instead of stopping.
-* **`warmUpVoice()`** now binds the recogniser service instead of loading sherpa when the platform recogniser
-  is available (sherpa is warmed only for the fallback).
+* **`warmUpVoice()`** loads sherpa only on the other platforms; the Android recogniser is created at Start, as in the reference.
 
 ## Deviations from the reference (deliberate)
 

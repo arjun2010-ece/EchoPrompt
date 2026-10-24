@@ -105,33 +105,6 @@ class SherpaSpeechEngine implements SpeechEngine {
     }
   }
 
-  /// Like [listen] but reports the recogniser's whole running text, the form [ScriptTracker] follows.
-  Stream<SpeechHypothesis> hypotheses(Stream<Float32List> samples) async* {
-    final rec = _onlineRecognizer();
-    final stream = rec.createStream();
-    var last = '';
-    try {
-      await for (final chunk in samples) {
-        stream.acceptWaveform(samples: chunk, sampleRate: 16000);
-        while (rec.isReady(stream)) {
-          rec.decode(stream);
-        }
-        final text = rec.getResult(stream).text;
-        if (text != last) {
-          last = text;
-          yield SpeechHypothesis(text, isFinal: false);
-        }
-        if (rec.isEndpoint(stream)) {
-          yield SpeechHypothesis(last, isFinal: true);
-          last = '';
-          rec.reset(stream);
-        }
-      }
-    } finally {
-      stream.free();
-    }
-  }
-
   @override
   Future<List<TranscriptSegment>> transcribeFile(String path) async {
     final rec = _offlineRecognizer();

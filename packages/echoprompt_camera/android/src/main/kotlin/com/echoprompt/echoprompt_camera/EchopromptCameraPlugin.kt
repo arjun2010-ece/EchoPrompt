@@ -21,6 +21,9 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.view.TextureRegistry
 import java.io.File
+import java.io.IOException
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -51,15 +54,23 @@ class EchopromptCameraPlugin : FlutterPlugin, ActivityAware, MethodChannel.Metho
     private var audio: AudioCapture? = null
     private var recorder: Recorder? = null
 
+    // The recording's audio for the speech recogniser: capture thread -> queue -> writer thread -> pipe.
+    @Volatile private var speechQueue: ArrayBlockingQueue<ByteArray>? = null
+    @Volatile private var speechDecimator: Decimator? = null
+    private var speechRead: ParcelFileDescriptor? = null
+    private var speechWrite: ParcelFileDescriptor? = null
+
     // MARK: FlutterPlugin
 
     override fun onAttachedToEngine(b: FlutterPlugin.FlutterPluginBinding) {
         context = b.applicationContext
         textures = b.textureRegistry
+        SpeechAudioBridge.opener = ::openSpeechPipe
+        SpeechAudioBridge.closer = ::closeSpeechPipe
         MethodChannel(b.binaryMessenger, "com.echoprompt/camera").setMethodCallHandler(this)
         EventChannel(b.binaryMessenger, "com.echoprompt/camera/audio").setStreamHandler(object : EventChannel.StreamHandler {
             override fun onListen(a: Any?, s: EventChannel.EventSink) { audioSink = s; ensureAudio() }
-            override fun onCancel(a: Any?) { audioSink = null; if (recorder == null) { audio?.stop(); audio = null } }
+            override fun onCancel(a: Any?) { audioSink = null; releaseAudioIfUnused() }
         })
         EventChannel(b.binaryMessenger, "com.echoprompt/camera/events").setStreamHandler(object : EventChannel.StreamHandler {
             override fun onListen(a: Any?, s: EventChannel.EventSink) { eventSink = s }
@@ -72,7 +83,7 @@ class EchopromptCameraPlugin : FlutterPlugin, ActivityAware, MethodChannel.Metho
         override fun onActivityPaused(a: Activity) { if (a == activity && recorder != null) finishRecording("interrupted") }
         override fun onActivityCreated(a: Activity, s: Bundle?) {}
         // Release the microphone in the background; reopen it for a still-subscribed speech listener.
-        override fun onActivityStarted(a: Activity) { if (a == activity && audioSink != null) ensureAudio() }
+        override fun onActivityStarted(a: Activity) { if (a == activity && (audioSink != null || speechQueue != null)) ensureAudio() }
         override fun onActivityResumed(a: Activity) {}
         override fun onActivityStopped(a: Activity) {
             if (a == activity && recorder == null) { audio?.stop(); audio = null }
@@ -244,6 +255,17 @@ class EchopromptCameraPlugin : FlutterPlugin, ActivityAware, MethodChannel.Metho
         if (audio == null) {
             audio = AudioCapture { pcm48k, ptsUs ->
                 recorder?.onAudio(pcm48k, ptsUs)
+                SpeechAudioBridge.level = rms(pcm48k)
+                val decimator = speechDecimator
+                speechQueue?.let { q ->
+                    val pcm16k = decimator?.process(pcm48k) ?: return@let
+                    val bytes = ByteBuffer.allocate(pcm16k.size * 2).order(ByteOrder.LITTLE_ENDIAN)
+                        .apply { asShortBuffer().put(pcm16k) }.array()
+                    if (!q.offer(bytes)) {
+                        q.poll()
+                        q.offer(bytes)
+                    }
+                }
                 val sink = audioSink
                 if (sink != null) {
                     val out = downsampleTo16kFloat(pcm48k)
@@ -251,6 +273,69 @@ class EchopromptCameraPlugin : FlutterPlugin, ActivityAware, MethodChannel.Metho
                 }
             }.also { it.start(context) }
         }
+    }
+
+    private fun rms(pcm: ShortArray): Float {
+        if (pcm.isEmpty()) return 0f
+        var sum = 0.0
+        for (v in pcm) {
+            val x = v / 32768.0
+            sum += x * x
+        }
+        return Math.sqrt(sum / pcm.size).toFloat()
+    }
+
+    /**
+     * Opens the pipe the recogniser reads the microphone from, starting the capture if needed (the same
+     * capture records a take's audio). Null if the microphone can't be opened.
+     */
+    private fun openSpeechPipe(): ParcelFileDescriptor? {
+        speechRead?.let { return it }
+        try {
+            ensureAudio()
+        } catch (_: Exception) {
+            audio = null
+            return null
+        }
+        val pipe = try {
+            ParcelFileDescriptor.createPipe()
+        } catch (_: IOException) {
+            return null
+        }
+        // About 0.5 s of audio, like the reference's 12 reads of at least 4096 bytes.
+        val q = ArrayBlockingQueue<ByteArray>(26)
+        speechRead = pipe[0]
+        speechWrite = pipe[1]
+        speechDecimator = Decimator()
+        speechQueue = q
+        Thread {
+            try {
+                ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).use { out ->
+                    while (speechQueue === q) {
+                        val bytes = q.poll(10, TimeUnit.MILLISECONDS) ?: continue
+                        out.write(bytes)
+                    }
+                }
+            } catch (_: Exception) {
+                // The recogniser stopped reading, or the pipe was closed.
+            }
+        }.apply { name = "echoprompt-speech-audio" }.start()
+        return pipe[0]
+    }
+
+    private fun closeSpeechPipe() {
+        speechQueue = null
+        speechDecimator = null
+        try { speechWrite?.close() } catch (_: IOException) {}
+        try { speechRead?.close() } catch (_: IOException) {}
+        speechWrite = null
+        speechRead = null
+        releaseAudioIfUnused()
+    }
+
+    /** Stops the microphone once no take, speech pipe or sample stream needs it. */
+    private fun releaseAudioIfUnused() {
+        if (recorder == null && speechQueue == null && audioSink == null) { audio?.stop(); audio = null }
     }
 
     private fun downsampleTo16kFloat(pcm: ShortArray): ByteArray {
@@ -287,7 +372,7 @@ class EchopromptCameraPlugin : FlutterPlugin, ActivityAware, MethodChannel.Metho
         val (path, durationMs) = r.stop()
         context.stopService(Intent(context, RecordingService::class.java))
         entry?.let { createSession(listOf(Surface(it.surfaceTexture()))) }
-        if (audioSink == null) { audio?.stop(); audio = null }
+        releaseAudioIfUnused()
         if (reason != "user") emit(mapOf("type" to reason, "path" to path))
         return mapOf("path" to path, "durationMs" to durationMs.toInt(), "reason" to reason)
     }
@@ -306,7 +391,52 @@ class EchopromptCameraPlugin : FlutterPlugin, ActivityAware, MethodChannel.Metho
     private fun emit(m: Map<String, Any>) = main.post { eventSink?.success(m) }
 
     private fun teardown() {
+        closeSpeechPipe()
+        SpeechAudioBridge.opener = null
+        SpeechAudioBridge.closer = null
         stopPreview(); audio?.stop(); audio = null
+    }
+}
+
+/**
+ * 48 kHz → 16 kHz for the speech recogniser. Google's on-device engine runs at 16 kHz: fed 48 kHz it rebuilds
+ * itself at every session start ("Must re-create SODA due to changed sample rate"), which costs about 0.8 s
+ * on the emulator before it hears anything. A windowed-sinc low-pass keeps what is above 8 kHz from folding
+ * back. Chunks must be a multiple of 3 samples (the capture trims them).
+ */
+private class Decimator {
+    private val taps = FloatArray(TAPS).also { h ->
+        val mid = (TAPS - 1) / 2.0
+        var sum = 0.0
+        for (n in 0 until TAPS) {
+            val x = n - mid
+            val sinc = if (x == 0.0) 2 * CUTOFF else Math.sin(2 * Math.PI * CUTOFF * x) / (Math.PI * x)
+            val hamming = 0.54 - 0.46 * Math.cos(2 * Math.PI * n / (TAPS - 1))
+            h[n] = (sinc * hamming).toFloat()
+            sum += h[n]
+        }
+        for (n in 0 until TAPS) h[n] = (h[n] / sum).toFloat()
+    }
+    private val history = FloatArray(TAPS - 1)
+
+    fun process(input: ShortArray): ShortArray {
+        val buf = FloatArray(history.size + input.size)
+        history.copyInto(buf)
+        for (i in input.indices) buf[history.size + i] = input[i].toFloat()
+        val out = ShortArray(input.size / 3)
+        for (k in out.indices) {
+            val newest = history.size + 3 * k + 2
+            var acc = 0f
+            for (j in 0 until TAPS) acc += taps[j] * buf[newest - j]
+            out[k] = acc.coerceIn(-32768f, 32767f).toInt().toShort()
+        }
+        buf.copyInto(history, 0, buf.size - history.size)
+        return out
+    }
+
+    private companion object {
+        const val TAPS = 47
+        const val CUTOFF = 7200.0 / 48000.0
     }
 }
 
@@ -320,7 +450,8 @@ private class AudioCapture(val onData: (ShortArray, Long) -> Unit) {
     fun start(context: Context) {
         val rate = 48000
         val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        val r = AudioRecord(MediaRecorder.AudioSource.CAMCORDER, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, min * 4)
+        // The plain microphone source, as the reference's shared capture uses for recognition and the take.
+        val r = AudioRecord(MediaRecorder.AudioSource.MIC, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, min * 2)
         // Keep input on the built-in mic so Bluetooth output keeps A2DP quality.
         val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         am.getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }

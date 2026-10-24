@@ -425,6 +425,12 @@ Start this **only once EchoPrompt earns real money**. Suggested triggers:
 
 Everything is listed in §9.5. The product and code don't change, because store accounts can be migrated to a company later.
 
+### Phase 6 (future scope): Voice mode on Android phones without on-device speech recognition
+
+Android Voice mode now follows the reference app: it uses the phone's on-device `SpeechRecognizer` and falls back to the system recogniser, which may use the network (`app/docs/android-voice-reference-parity.md`). A phone with neither only gets an alert saying Voice mode isn't available yet.
+
+Later, add an offline fallback engine for those phones. The candidate is **Vosk**, which the reference app also offers. It feeds the same `ScriptTracker` as the platform recogniser. The sherpa-onnx path is not used for Android Voice mode any more.
+
 ---
 
 ## 9. Distribution and monetisation readiness

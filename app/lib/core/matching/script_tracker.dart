@@ -1,22 +1,21 @@
 import '../script/text.dart';
 
 final _apostrophes = RegExp("['’]");
-final _edgePunctuation = RegExp(r'^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$', unicode: true);
 
 /// Voice-script tracker for recognisers that report their whole running
-/// hypothesis (Android `SpeechRecognizer`). It is re-run on every changed partial
+/// hypothesis (Android `SpeechRecognizer`). It is re-run on every partial
 /// result and matches the last few spoken words against an n-gram window of the
 /// script ahead of the cursor, so the highlight follows the speaker without waiting
 /// for a recogniser to finish a sentence. See `docs/android-voice-tracking-implementation.md`.
 ///
-/// Eligible script words are those with letters or digits; the rest are skipped.
+/// Eligible script words are those with letters or digits; the rest are skipped, as are
+/// `[bracketed]` stage directions and words with an emoji, which nobody reads aloud.
 class ScriptTracker {
   ScriptTracker(List<String> words, {int lookahead = 150, this.allowBackward = false})
-    : _raw = words,
-      _clean = [for (final w in words) normalizeWord(w)],
+    : _clean = _cleanWords(words),
       _lookahead = lookahead.clamp(5, 150);
 
-  final List<String> _raw;
+  /// The matchable form of every script word; empty for the ones that are skipped.
   final List<String> _clean;
   final int _lookahead;
 
@@ -24,6 +23,38 @@ class ScriptTracker {
   final bool allowBackward;
 
   static const _tailLength = 6;
+
+  /// Clean forms of [words], empty for the skipped ones. Text from a `[` to the next `]` is a
+  /// stage direction (it may span several words and lines); a word containing an emoji is
+  /// skipped whole.
+  static List<String> _cleanWords(List<String> words) {
+    var inBracket = false;
+    return [
+      for (final w in words)
+        () {
+          final outside = StringBuffer();
+          for (final c in w.runes) {
+            if (inBracket) {
+              if (c == 0x5D) inBracket = false;
+            } else if (c == 0x5B) {
+              inBracket = true;
+            } else {
+              outside.writeCharCode(c);
+            }
+          }
+          return _hasEmoji(w) ? '' : normalizeWord(outside.toString());
+        }(),
+    ];
+  }
+
+  static bool _hasEmoji(String w) => w.runes.any(
+    (c) =>
+        (c >= 127744 && c < 129792) ||
+        (c >= 127456 && c < 127488) ||
+        (c >= 9728 && c < 10176) ||
+        (c >= 65024 && c < 65040) ||
+        c == 8205,
+  );
 
   /// Index of the next word expected.
   int _d = 0;
@@ -53,16 +84,12 @@ class ScriptTracker {
     _anchoredAt = 0;
   }
 
-  /// The next [lookahead] script words, lowercased and de-duplicated, for the recogniser's
-  /// vocabulary bias.
+  /// The clean forms of the eligible words among the next [lookahead] script entries,
+  /// de-duplicated, for the recogniser's vocabulary bias (reference `ud.A`).
   List<String> biasingWords() {
     final out = <String>{};
-    var count = 0;
-    for (var i = _d; i < _clean.length && count < _lookahead; i++) {
-      if (_clean[i].isEmpty) continue;
-      count++;
-      final w = _raw[i].toLowerCase().replaceAll(_edgePunctuation, '');
-      if (w.isNotEmpty) out.add(w);
+    for (var i = _d; i < _clean.length && i < _d + _lookahead; i++) {
+      if (_clean[i].isNotEmpty) out.add(_clean[i]);
     }
     return out.toList();
   }
