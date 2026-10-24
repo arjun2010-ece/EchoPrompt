@@ -43,9 +43,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
   StreamSubscription<Map<Object?, Object?>>? _events;
   DateTime? _micStart;
   bool _opening = false;
-  // Android Voice mode: the prompter started as the screen opened, so the script shows before the camera.
+  // Voice mode: the prompter started as the screen opened, so the script shows before the camera.
   bool _promptReady = false;
-  // Android Voice mode: the microphone was listening when the app went to the background.
+  // Voice mode: the microphone was listening when the app went to the background.
   bool _micWasOn = false;
   // Cached because `ref` can't be read in dispose().
   late final AnalyticsService _analytics;
@@ -89,14 +89,14 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
     animation.removeStatusListener(listener);
   }
 
-  /// Android: Voice mode listens through a connected headset microphone; Audio mode through the built-in one.
+  /// Mobile: Voice mode listens through a connected headset microphone; Audio mode through the built-in one.
   void _routeInput(PromptControlMode mode) {
-    if (isAndroid) EchoPromptCamera.setHeadsetInput(mode != PromptControlMode.recordedAudio);
+    if (isMobile) EchoPromptCamera.setHeadsetInput(mode != PromptControlMode.recordedAudio);
   }
 
   Future<void> _init() async {
     _routeInput(ref.read(settingsProvider).mode);
-    // Android Voice mode's start-up is light, so its script shows at once, on black, and the camera fades
+    // Voice mode's start-up is light, so its script shows at once, on black, and the camera fades
     // in behind it once open (as in the reference). Audio mode transcribes its file on this thread, so it
     // starts once the preview is up (below).
     if (_micIsIndependent) {
@@ -157,11 +157,11 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
     }
   }
 
-  /// Android Voice mode: the microphone listens from the moment the screen opens and only the
+  /// Voice mode: the microphone listens from the moment the screen opens and only the
   /// play button switches it. Recording, pausing and stopping the take never touch it.
-  bool get _micIsIndependent => isAndroid && ref.read(settingsProvider).mode == PromptControlMode.voice;
+  bool get _micIsIndependent => isMobile && ref.read(settingsProvider).mode == PromptControlMode.voice;
 
-  /// Starts the prompter on the current script. In Android Voice mode it also starts listening when
+  /// Starts the prompter on the current script. In Voice mode it also starts listening when
   /// [listen] is set, or when it was listening before (so editing the script keeps the mic as it was).
   Future<void> _beginPrompter({bool listen = false}) async {
     final studio = ref.read(studioProvider);
@@ -343,8 +343,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _events?.cancel();
-    // Android: the play button alone switches the microphone here, so leaving the screen must switch it off.
-    if (isAndroid) Future.microtask(_prompter.pause);
+    // Mobile: the play button alone switches the microphone here, so leaving the screen must switch it off.
+    if (isMobile) Future.microtask(_prompter.pause);
     _analytics.log('video_mode_exit', {'recordings_count': _recordings});
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
@@ -394,17 +394,17 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
           Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(_error!, style: const TextStyle(color: Colors.white), textAlign: TextAlign.center))),
         // Floating prompter overlay docked at the top, below the safe area.
         Positioned(
-          left: isAndroid ? 0 : 12,
-          right: isAndroid ? 0 : 12,
+          left: isMobile ? 0 : 12,
+          right: isMobile ? 0 : 12,
           top: media.padding.top + 12,
           height: media.size.height * fraction,
-          // Appears together with the camera, or before it in Android Voice mode (see _init).
+          // Appears together with the camera, or before it in Voice mode (see _init).
           child: AnimatedOpacity(
             opacity: showScript ? 1 : 0,
             duration: _fadeIn,
             child: Stack(children: [
             ClipRRect(
-              borderRadius: isAndroid ? const BorderRadius.vertical(bottom: Radius.circular(20)) : BorderRadius.circular(20),
+              borderRadius: isMobile ? const BorderRadius.vertical(bottom: Radius.circular(20)) : BorderRadius.circular(20),
               child: PromptView(
                 style: PromptLayoutStyle.compact,
                 backgroundOpacity: ref.watch(settingsProvider.select((s) => s.opacity)) * 0.4,
@@ -510,8 +510,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
               }),
               itemBuilder: (_) => [
                 CheckedPopupMenuItem(value: 'countdown', checked: _useCountdown, child: const Text('3-2-1 countdown')),
-                // Android has one way: Audio mode plays on the speaker so the microphone can follow it.
-                if (!isAndroid) ...[
+                // Mobile has one way: Audio mode plays on the speaker so the microphone can follow it.
+                if (!isMobile) ...[
                 const PopupMenuDivider(),
                 const PopupMenuItem(enabled: false, child: Text('Reference audio plays through')),
                 CheckedPopupMenuItem(value: 'headphones', checked: _route == ReferenceRoute.headphones, child: const Text('Headphones (not in the video)')),

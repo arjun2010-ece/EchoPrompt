@@ -69,7 +69,9 @@
 	<key>NSCameraUsageDescription</key>
 	<string>EchoPrompt uses the camera to record your video while you read the script.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>EchoPrompt uses the microphone to record your video and to follow your voice. Speech is processed on this device.</string>
+	<string>EchoPrompt uses the microphone to record your video and to follow your voice.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>EchoPrompt uses speech recognition to follow your voice (or your reference audio) in the script. Speech is processed on this device when your device supports it.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>EchoPrompt saves the videos you record to your photo library.</string>
 	<key>UIFileSharingEnabled</key>

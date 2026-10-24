@@ -110,11 +110,11 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
     _ticker.start();
   }
 
-  /// Android: nothing is moving, so stop asking for frames. A running ticker redraws the
+  /// Mobile: nothing is moving, so stop asking for frames. A running ticker redraws the
   /// whole prompter every frame (most of a CPU core on the emulator), which starves the
   /// speech recogniser. The reference's text view only draws when something changes.
   void _sleep() {
-    if (isAndroid) _ticker.stop();
+    if (isMobile) _ticker.stop();
   }
 
   @override

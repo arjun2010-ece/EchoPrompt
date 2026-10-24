@@ -12,7 +12,7 @@ import '../../core/script/text.dart';
 import '../../core/settings/prompt_settings.dart';
 import '../../services/audio/audio_input.dart';
 import '../../services/audio/reference_clock.dart';
-import '../../services/speech/android_speech_recognizer.dart';
+import '../../services/speech/native_speech_recognizer.dart';
 import '../../services/speech/sherpa_speech_engine.dart';
 import '../../services/speech/speech_engine.dart';
 
@@ -22,10 +22,10 @@ final speechEngineProvider = Provider<SpeechEngine>((ref) {
   return e;
 });
 
-/// Voice and Audio mode's recogniser on Android; null elsewhere. Android never uses
+/// Voice and Audio mode's recogniser on Android and iOS; null on desktop. Mobile never uses
 /// [speechEngineProvider]: a phone without a recogniser is told so.
-final androidSpeechProvider = Provider<AndroidSpeechRecognizer?>(
-  (_) => Platform.isAndroid ? AndroidSpeechRecognizer() : null,
+final nativeSpeechProvider = Provider<NativeSpeechRecognizer?>(
+  (_) => Platform.isAndroid || Platform.isIOS ? NativeSpeechRecognizer() : null,
 );
 final audioInputProvider = Provider<AudioInput>((_) => RecordAudioInput());
 
@@ -64,7 +64,7 @@ class PrompterState {
   /// few seconds. Cleared as soon as the highlight moves.
   final bool lost;
 
-  /// Android Voice mode: this device has no on-device speech recognition to follow the reader
+  /// Mobile Voice mode: this device has no on-device speech recognition to follow the reader
   /// with. The Read and Record screens tell the reader once each time this turns on.
   final bool voiceUnsupported;
 
@@ -140,8 +140,8 @@ class PrompterController extends Notifier<PrompterState> {
     _tracker = ScriptTracker(scriptWords(script));
     state = PrompterState(resetToken: state.resetToken + 1);
     _externalSamples = externalSamples;
-    // Android Audio mode follows the file by listening to it, so it must be heard.
-    _audible = audible || (_androidAudio);
+    // Audio mode on mobile follows the file by listening to it, so it must be heard.
+    _audible = audible || (_nativeAudio);
     _audioPath = audioPath;
     if (mode == PromptControlMode.recordedAudio) await _prepareAudio();
   }
@@ -149,9 +149,9 @@ class PrompterController extends Notifier<PrompterState> {
   /// Loads the speech model before Voice mode's Start, so Start doesn't spend its first
   /// seconds (and the first spoken words) on it. Loading blocks the UI thread briefly, so
   /// call it once the screen is on display, not while its route is still animating in.
-  /// Android's platform recogniser needs none: like the reference, it is created at Start.
+  /// The platform recogniser needs none: like the reference, it is created at Start.
   void warmUpVoice() {
-    if (ref.read(androidSpeechProvider) == null) _warmUpSherpa();
+    if (ref.read(nativeSpeechProvider) == null) _warmUpSherpa();
   }
 
   void _warmUpSherpa() {
@@ -159,9 +159,9 @@ class PrompterController extends Notifier<PrompterState> {
     if (engine is SherpaSpeechEngine) unawaited(engine.warmUp().catchError((Object _) {}));
   }
 
-  /// Android Audio mode: the file plays out loud and the recogniser follows it through the microphone,
+  /// Mobile Audio mode: the file plays out loud and the recogniser follows it through the microphone,
   /// exactly as it follows a reader in Voice mode (no transcription of the file).
-  bool get _androidAudio => _mode == PromptControlMode.recordedAudio && ref.read(androidSpeechProvider) != null;
+  bool get _nativeAudio => _mode == PromptControlMode.recordedAudio && ref.read(nativeSpeechProvider) != null;
 
   Stream<Float32List>? _externalSamples;
   bool _audible = true;
@@ -177,7 +177,7 @@ class PrompterController extends Notifier<PrompterState> {
         await _startVoice();
       case PromptControlMode.recordedAudio:
         final clock = _clock;
-        if (_androidAudio) {
+        if (_nativeAudio) {
           if (clock == null) return;
           // Listening first, so the recogniser is up as the audio starts; if it can't, nothing plays.
           await _startVoice();
@@ -205,7 +205,7 @@ class PrompterController extends Notifier<PrompterState> {
         await _clock?.pause();
         _clockTimer?.cancel();
         _clockTimer = null;
-        await _stopVoice(); // Android Audio mode listens; elsewhere this does nothing
+        await _stopVoice(); // Audio mode listens on mobile; elsewhere this does nothing
     }
     _clearLost();
     state = state.copyWith(playing: false, lost: false);
@@ -237,9 +237,9 @@ class PrompterController extends Notifier<PrompterState> {
   // --- Voice ---------------------------------------------------------------
 
   Future<void> _startVoice() async {
-    final native = ref.read(androidSpeechProvider);
+    final native = ref.read(nativeSpeechProvider);
     if (native != null) {
-      // Android has no other recogniser: a device without on-device speech recognition is told so.
+      // Mobile has no other recogniser: a device without on-device speech recognition is told so.
       state = state.copyWith(voiceUnsupported: false);
       if (await _safeAvailable(native)) return _startNativeVoice(native);
       return _voiceUnsupported('Speech recognition is not available on this device');
@@ -269,7 +269,7 @@ class PrompterController extends Notifier<PrompterState> {
   void _voiceUnsupported(String message) =>
       state = state.copyWith(playing: false, status: message, voiceUnsupported: true);
 
-  Future<bool> _safeAvailable(AndroidSpeechRecognizer native) async {
+  Future<bool> _safeAvailable(NativeSpeechRecognizer native) async {
     try {
       return await native.isAvailable();
     } catch (_) {
@@ -279,7 +279,7 @@ class PrompterController extends Notifier<PrompterState> {
 
   /// Voice mode on the platform recogniser: it reports the whole running hypothesis, which
   /// [ScriptTracker] follows on every change. It records the microphone itself.
-  Future<void> _startNativeVoice(AndroidSpeechRecognizer native) async {
+  Future<void> _startNativeVoice(NativeSpeechRecognizer native) async {
     if (!await _input.hasPermission()) {
       state = state.copyWith(status: 'Microphone access is needed for Voice control');
       return;
@@ -304,7 +304,7 @@ class PrompterController extends Notifier<PrompterState> {
     });
   }
 
-  Future<void> _sendBias(AndroidSpeechRecognizer native) async {
+  Future<void> _sendBias(NativeSpeechRecognizer native) async {
     final words = _tracker?.biasingWords();
     if (words == null) return;
     try {
@@ -372,7 +372,7 @@ class PrompterController extends Notifier<PrompterState> {
     }
     if (h.isFinal) {
       tracker.endUtterance();
-      final native = ref.read(androidSpeechProvider);
+      final native = ref.read(nativeSpeechProvider);
       if (native != null && _nativeVoice) unawaited(_sendBias(native));
     }
   }
@@ -390,7 +390,7 @@ class PrompterController extends Notifier<PrompterState> {
       state = state.copyWith(status: 'Choose an audio file');
       return;
     }
-    if (_androidAudio) return _prepareAndroidAudio(path);
+    if (_nativeAudio) return _prepareNativeAudio(path);
     state = state.copyWith(preparing: true, status: 'Synchronizing audio…');
     try {
       final engine = ref.read(speechEngineProvider);
@@ -422,8 +422,8 @@ class PrompterController extends Notifier<PrompterState> {
     }
   }
 
-  /// Android: only loads the file to play it; following it is the recogniser's job at Play.
-  Future<void> _prepareAndroidAudio(String path) async {
+  /// Mobile: only loads the file to play it; following it is the recogniser's job at Play.
+  Future<void> _prepareNativeAudio(String path) async {
     state = state.copyWith(preparing: true, status: 'Loading audio…');
     try {
       final clock = ref.read(referenceClockFactoryProvider)(audible: true);

@@ -2,11 +2,11 @@ import 'package:flutter/services.dart';
 
 import 'speech_engine.dart';
 
-/// Android's `SpeechRecognizer`, on-device where the phone has it and otherwise the system one (which
-/// may use the network), reporting partial results as the speaker talks. On Android 13+ it reads our own
-/// microphone capture; below that it opens the microphone itself. [isAvailable] is false when the phone
-/// has no recogniser at all.
-class AndroidSpeechRecognizer {
+/// The platform speech recogniser: Android's `SpeechRecognizer` or iOS's `SFSpeechRecognizer`, on-device where
+/// the phone has it and otherwise the system one (which may use the network), reporting partial results as the
+/// speaker talks. It reads our own microphone capture (the one a take records), except on Android below 13,
+/// where it opens the microphone itself. [isAvailable] is false when the phone has no recogniser at all.
+class NativeSpeechRecognizer {
   static const _method = MethodChannel('com.echoprompt/speech');
   static const _events = EventChannel('com.echoprompt/speech/events');
 

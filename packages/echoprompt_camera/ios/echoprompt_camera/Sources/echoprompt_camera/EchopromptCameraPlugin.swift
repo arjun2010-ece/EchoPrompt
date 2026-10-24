@@ -24,6 +24,12 @@ public class EchopromptCameraPlugin: NSObject, FlutterPlugin, FlutterTexture, Fl
     private var audioSink: FlutterEventSink?
     private var eventSink: FlutterEventSink?
     private var audioListening = false
+    // The native speech recogniser reads this capture too (see SpeechRecognizerChannel).
+    var speech: SpeechRecognizerChannel?
+    private var speechActive = false
+    // Voice mode may listen through a connected headset microphone; Audio mode must hear the speaker, so it
+    // uses the built-in one.
+    private var preferHeadsetMic = true
 
     // Writer state (touched on `queue` only).
     private var writer: AVAssetWriter?
@@ -56,6 +62,7 @@ public class EchopromptCameraPlugin: NSObject, FlutterPlugin, FlutterTexture, Fl
             .setStreamHandler(AudioHandler(p))
         FlutterEventChannel(name: "com.echoprompt/camera/events", binaryMessenger: registrar.messenger())
             .setStreamHandler(p)
+        SpeechRecognizerChannel.register(with: registrar, camera: p)
         NotificationCenter.default.addObserver(p, selector: #selector(interrupted), name: .AVCaptureSessionWasInterrupted, object: nil)
         NotificationCenter.default.addObserver(p, selector: #selector(interrupted), name: UIApplication.willResignActiveNotification, object: nil)
         NotificationCenter.default.addObserver(p, selector: #selector(deviceRotated), name: UIDevice.orientationDidChangeNotification, object: nil)
@@ -96,7 +103,10 @@ public class EchopromptCameraPlugin: NSObject, FlutterPlugin, FlutterTexture, Fl
         case "headphonesConnected":
             let outs = AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portType)
             result(outs.contains { [.headphones, .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .usbAudio].contains($0) })
-        case "setReferenceRoute": result(nil) // input always built-in mic; see configureAudioSession
+        case "setReferenceRoute": result(nil) // reference audio always plays on the speaker
+        case "setInputPreference":
+            let headset = a["headset"] as? Bool ?? true
+            queue.async { self.preferHeadsetMic = headset; self.applyPreferredInput(); DispatchQueue.main.async { result(nil) } }
         default: result(FlutterMethodNotImplemented)
         }
     }
@@ -184,9 +194,14 @@ public class EchopromptCameraPlugin: NSObject, FlutterPlugin, FlutterTexture, Fl
 
     // MARK: Audio capture (one stream → file + speech)
 
+    /// Called by the speech recogniser when it starts or stops needing the microphone.
+    func setSpeechActive(_ active: Bool) {
+        queue.async { self.speechActive = active; self.updateAudioInput() }
+    }
+
     private func updateAudioInput() {
         guard let s = session else { return }
-        let need = audioListening || writer != nil
+        let need = audioListening || speechActive || writer != nil
         if need && audioOut == nil {
             configureAudioSession()
             s.beginConfiguration()
@@ -208,10 +223,20 @@ public class EchopromptCameraPlugin: NSObject, FlutterPlugin, FlutterTexture, Fl
 
     private func configureAudioSession() {
         let a = AVAudioSession.sharedInstance()
-        // Headphone output via A2DP, input pinned to the built-in mic.
-        try? a.setCategory(.playAndRecord, mode: .videoRecording, options: [.allowBluetoothA2DP, .defaultToSpeaker])
+        // Bluetooth headsets are allowed as microphones; with none connected the built-in one is used.
+        try? a.setCategory(.playAndRecord, mode: .videoRecording, options: [.allowBluetoothA2DP, .allowBluetooth, .defaultToSpeaker])
         try? a.setActive(true)
-        if let builtIn = a.availableInputs?.first(where: { $0.portType == .builtInMic }) { try? a.setPreferredInput(builtIn) }
+        applyPreferredInput()
+    }
+
+    /// The reference's order: a USB headset or device, a wired headset, a Bluetooth headset microphone, else the built-in one.
+    private func applyPreferredInput() {
+        let a = AVAudioSession.sharedInstance()
+        let inputs = a.availableInputs ?? []
+        let headset = preferHeadsetMic
+            ? [AVAudioSession.Port.usbAudio, .headsetMic, .bluetoothHFP].lazy.compactMap { t in inputs.first { $0.portType == t } }.first
+            : nil
+        if let pick = headset ?? inputs.first(where: { $0.portType == .builtInMic }) { try? a.setPreferredInput(pick) }
     }
 
     // MARK: Sample buffers
@@ -229,7 +254,8 @@ public class EchopromptCameraPlugin: NSObject, FlutterPlugin, FlutterTexture, Fl
     }
 
     private func sendSpeech(_ sb: CMSampleBuffer) {
-        guard audioListening, let sink = audioSink,
+        let sink = audioListening ? audioSink : nil
+        guard sink != nil || speechActive,
               let desc = CMSampleBufferGetFormatDescription(sb),
               let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(desc) else { return }
         var d = asbd.pointee
@@ -251,8 +277,11 @@ public class EchopromptCameraPlugin: NSObject, FlutterPlugin, FlutterTexture, Fl
             supplied = true; status.pointee = .haveData; return inBuf
         }
         guard err == nil, out.frameLength > 0, let ch = out.floatChannelData?[0] else { return }
-        let data = Data(bytes: ch, count: Int(out.frameLength) * 4)
-        DispatchQueue.main.async { sink(FlutterStandardTypedData(bytes: data)) }
+        if speechActive { speech?.feed(out) }
+        if let sink = sink {
+            let data = Data(bytes: ch, count: Int(out.frameLength) * 4)
+            DispatchQueue.main.async { sink(FlutterStandardTypedData(bytes: data)) }
+        }
     }
 
     // MARK: Writer

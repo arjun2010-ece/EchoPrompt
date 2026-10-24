@@ -8,7 +8,7 @@ import '../../ui/discard_changes_dialog.dart';
 
 /// Edits the current script from a prompter screen. Returns true when the text
 /// changed, so the caller can restart its prompter session on the new script.
-/// On Android the text is a draft until Save, which cleans and stores it; Cancel discards it.
+/// On mobile the text is a draft until Save, which cleans and stores it; Cancel discards it.
 Future<bool> showScriptEditor(BuildContext context, WidgetRef ref) async {
   final before = ref.read(studioProvider).script;
   await showModalBottomSheet<void>(
@@ -39,10 +39,10 @@ class _ScriptEditorSheetState extends ConsumerState<_ScriptEditorSheet> {
     super.dispose();
   }
 
-  bool get _dirty => isAndroid && _controller.text != ref.read(studioProvider).script;
+  bool get _dirty => isMobile && _controller.text != ref.read(studioProvider).script;
 
   void _edited(String text) {
-    if (isAndroid) return setState(() {});
+    if (isMobile) return setState(() {});
     ref.read(studioProvider.notifier).setScript(text);
   }
 
@@ -74,7 +74,7 @@ class _ScriptEditorSheetState extends ConsumerState<_ScriptEditorSheet> {
             padding: const EdgeInsets.fromLTRB(20, 8, 8, 0),
             child: Row(children: [
               Expanded(child: Text('Edit script', style: theme.textTheme.titleLarge)),
-              if (isAndroid) ...[
+              if (isMobile) ...[
                 TextButton(
                   onPressed: () => dirty ? _cancel(false) : Navigator.of(context).pop(),
                   child: const Text('Cancel'),

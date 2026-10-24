@@ -454,12 +454,12 @@ class _EditorState extends ConsumerState<_Editor> {
     super.dispose();
   }
 
-  bool get _isDirty => isAndroid && _controller.text != ref.read(studioProvider).script;
+  bool get _isDirty => isMobile && _controller.text != ref.read(studioProvider).script;
 
   void _publishDirty() => widget.dirty?.value = _isDirty;
 
   void _edited(String text) {
-    if (!isAndroid) return ref.read(studioProvider.notifier).setScript(text);
+    if (!isMobile) return ref.read(studioProvider.notifier).setScript(text);
     setState(() {});
     _publishDirty();
   }
@@ -527,7 +527,7 @@ class _EditorState extends ConsumerState<_Editor> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: _editorMaxWidth),
             child: Column(children: [
-              if (isAndroid)
+              if (isMobile)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
                   child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
@@ -579,7 +579,7 @@ class _EditorState extends ConsumerState<_Editor> {
                   // Short, wide windows (a phone in landscape) keep the bar to one
                   // row so the script keeps most of the height.
                   final inline = c.maxWidth >= 520 && MediaQuery.sizeOf(context).height < 600;
-                  final stats = Text(_stats(isAndroid ? _controller.text : script), style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant));
+                  final stats = Text(_stats(isMobile ? _controller.text : script), style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant));
                   final modePicker = SegmentedButton<PromptControlMode>(
                     showSelectedIcon: false,
                     segments: [for (final m in PromptControlMode.values) ButtonSegment(value: m, label: Text(m.label))],
