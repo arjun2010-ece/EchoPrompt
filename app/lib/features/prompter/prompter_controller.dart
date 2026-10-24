@@ -22,10 +22,10 @@ final speechEngineProvider = Provider<SpeechEngine>((ref) {
   return e;
 });
 
-/// Voice and Audio mode's recogniser on Android and iOS; null on desktop. Mobile never uses
-/// [speechEngineProvider]: a phone without a recogniser is told so.
+/// Voice and Audio mode's recogniser on Android, iOS and macOS; null on Windows, which still runs on
+/// [speechEngineProvider]. Where it exists the sherpa engine is never used: a device without a recogniser is told so.
 final nativeSpeechProvider = Provider<NativeSpeechRecognizer?>(
-  (_) => Platform.isAndroid || Platform.isIOS ? NativeSpeechRecognizer() : null,
+  (_) => Platform.isAndroid || Platform.isIOS || Platform.isMacOS ? NativeSpeechRecognizer() : null,
 );
 final audioInputProvider = Provider<AudioInput>((_) => RecordAudioInput());
 
@@ -289,7 +289,7 @@ class PrompterController extends Notifier<PrompterState> {
     await _sendBias(native);
     state = state.copyWith(playing: true, status: 'Listening', voiceUnsupported: false);
     // The Record screen records the microphone, so the recogniser may not open it itself (reference: Video mode).
-    _voiceSub = native.hypotheses(micFallback: _externalSamples == null).listen(_onHypothesis, onError: (Object e) {
+    _voiceSub = native.hypotheses(micFallback: _externalSamples == null, headsetMic: _mode != PromptControlMode.recordedAudio).listen(_onHypothesis, onError: (Object e) {
       final sub = _voiceSub;
       _nativeVoice = false;
       _voiceSub = null;

@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/script/clean_script.dart';
 import '../../core/script/reading_time.dart';
 import '../../core/settings/labels.dart';
 import '../../core/settings/prompt_settings.dart';
 import '../../services/providers.dart';
 import '../../services/storage/script_io.dart';
+import '../../ui/discard_changes_dialog.dart';
 import '../../ui/position_picker.dart';
 import '../../ui/prompt_text_controls.dart';
 import '../settings/preferences_screen.dart';
@@ -35,7 +37,46 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
   final _caretWord = ValueNotifier<int>(0);
   final _scaffold = GlobalKey<ScaffoldState>();
 
+  /// Whether the editor holds edits that are not saved yet.
+  final _dirty = ValueNotifier(false);
+
   bool get _mac => isMacOS;
+
+  bool get _isDirty => _controller.text != ref.read(studioProvider).script;
+
+  void _publishDirty() => _dirty.value = _isDirty;
+
+  /// True when nothing unsaved would be lost, or the user agreed to lose it.
+  Future<bool> _canReplaceDraft() async => !_dirty.value || await confirmDiscardChanges(context);
+
+  /// Puts the saved script back in the text box.
+  void _revert() {
+    _controller.value = TextEditingValue(
+      text: ref.read(studioProvider).script,
+      selection: const TextSelection.collapsed(offset: 0),
+    );
+    _publishDirty();
+  }
+
+  Future<void> _cancel() async {
+    if (await confirmDiscardChanges(context)) _revert();
+  }
+
+  Future<void> _save() async {
+    final cleaned = cleanScript(_controller.text);
+    if (!_dirty.value || cleaned.isEmpty) return;
+    _controller.value = TextEditingValue(
+      text: cleaned,
+      selection: TextSelection.collapsed(offset: _controller.selection.baseOffset.clamp(0, cleaned.length)),
+    );
+    final saved = ref.read(studioProvider.notifier).commitScript(cleaned);
+    _publishDirty();
+    await saved;
+  }
+
+  Future<void> _newScript() async {
+    if (await _canReplaceDraft()) ref.read(studioProvider.notifier).newScript();
+  }
 
   @override
   void initState() {
@@ -64,6 +105,7 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
     _controller.dispose();
     _focus.dispose();
     _caretWord.dispose();
+    _dirty.dispose();
     super.dispose();
   }
 
@@ -76,6 +118,7 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
   }
 
   Future<void> _import() async {
+    if (!await _canReplaceDraft()) return;
     final text = await ScriptIO.importText(
       ref.read(prefsProvider),
       ref.read(libraryProvider).directory,
@@ -98,7 +141,7 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
   }
 
   void _start() {
-    if (ref.read(studioProvider).script.trim().isEmpty) return;
+    if (_dirty.value || ref.read(studioProvider).script.trim().isEmpty) return;
     ref.read(studioProvider.notifier).start();
   }
 
@@ -118,15 +161,24 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
         text: script,
         selection: const TextSelection.collapsed(offset: 0),
       );
+      _publishDirty();
     });
 
     final width = MediaQuery.sizeOf(context).width;
     final threeColumns = width >= 1040;
     final stacked = width < 780;
-    final history = _ScriptList(onPicked: _closeDrawer, onNew: _closeDrawer);
-    final editor = _EditorPane(controller: _controller, focus: _focus);
+    final history = _ScriptList(onPicked: _closeDrawer, onNew: _closeDrawer, canReplace: _canReplaceDraft);
+    final editor = _EditorPane(
+      controller: _controller,
+      focus: _focus,
+      dirty: _dirty,
+      onEdited: _publishDirty,
+      onSave: _save,
+      onCancel: _cancel,
+    );
     final inspector = _Inspector(
       caretWord: _caretWord,
+      dirty: _dirty,
       onStart: _start,
       onPreferences: _preferences,
     );
@@ -164,7 +216,9 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
         SingleActivator(LogicalKeyboardKey.keyO, meta: _mac, control: !_mac):
             _import,
         SingleActivator(LogicalKeyboardKey.keyN, meta: _mac, control: !_mac):
-            ref.read(studioProvider.notifier).newScript,
+            _newScript,
+        SingleActivator(LogicalKeyboardKey.keyS, meta: _mac, control: !_mac):
+            _save,
       },
       child: Scaffold(
         key: _scaffold,
@@ -185,7 +239,7 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
             IconButton(
               tooltip: 'New script (${mod}N)',
               icon: const Icon(Icons.note_add_outlined),
-              onPressed: ref.read(studioProvider.notifier).newScript,
+              onPressed: _newScript,
             ),
             IconButton(
               tooltip: 'Import script (${mod}O)',
@@ -221,9 +275,12 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
 // --- scripts ---------------------------------------------------------------
 
 class _ScriptList extends ConsumerWidget {
-  const _ScriptList({required this.onPicked, required this.onNew});
+  const _ScriptList({required this.onPicked, required this.onNew, required this.canReplace});
   final VoidCallback onPicked;
   final VoidCallback onNew;
+
+  /// Asks before unsaved edits are replaced by another script.
+  final Future<bool> Function() canReplace;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -251,7 +308,8 @@ class _ScriptList extends ConsumerWidget {
               IconButton(
                 tooltip: 'New script',
                 icon: const Icon(Icons.add),
-                onPressed: () {
+                onPressed: () async {
+                  if (!await canReplace()) return;
                   notifier.newScript();
                   onNew();
                 },
@@ -265,11 +323,13 @@ class _ScriptList extends ConsumerWidget {
             child: ScriptListBody(
               history: history,
               dense: true,
-              onOpen: (s) {
+              onOpen: (s) async {
+                if (!await canReplace()) return;
                 notifier.load(s);
                 onPicked();
               },
-              onOpenDemo: () {
+              onOpenDemo: () async {
+                if (!await canReplace()) return;
                 notifier.loadDemo();
                 onPicked();
               },
@@ -283,12 +343,14 @@ class _ScriptList extends ConsumerWidget {
                 const PopupMenuDivider(),
                 const PopupMenuItem(value: 'delete', child: Text('Delete…')),
               ],
-              onMenu: (s, action) {
+              onMenu: (s, action) async {
                 switch (action) {
                   case 'edit':
+                    if (!await canReplace()) return;
                     notifier.load(s);
                     onPicked();
                   case 'duplicate':
+                    if (!await canReplace()) return;
                     notifier.duplicate(s);
                   case 'reveal':
                     ScriptIO.reveal(ref.read(libraryProvider).directory);
@@ -308,13 +370,28 @@ class _ScriptList extends ConsumerWidget {
 // --- editor ----------------------------------------------------------------
 
 class _EditorPane extends ConsumerWidget {
-  const _EditorPane({required this.controller, required this.focus});
+  const _EditorPane({
+    required this.controller,
+    required this.focus,
+    required this.dirty,
+    required this.onEdited,
+    required this.onSave,
+    required this.onCancel,
+  });
   final TextEditingController controller;
   final FocusNode focus;
+  final ValueNotifier<bool> dirty;
+  final VoidCallback onEdited;
+  final VoidCallback onSave;
+  final VoidCallback onCancel;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final script = ref.watch(studioProvider.select((s) => s.script));
+    // The built-in demo is for looking at: it has no Save and Cancel and can't be edited, so a draft
+    // can't get stuck on it. Create a script (New) to write your own.
+    ref.watch(studioProvider.select((s) => s.scriptRevision));
+    final demo = script == StudioNotifier.welcome && ref.read(studioProvider.notifier).currentId == null;
     final words = wordCount(script);
     final scheme = Theme.of(context).colorScheme;
     final time = readingTimeLabel(
@@ -348,16 +425,38 @@ class _EditorPane extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 12),
+          // Edits stay a draft until Save; Cancel puts the saved script back.
+          if (!demo) ...[
+          ValueListenableBuilder<bool>(
+            valueListenable: dirty,
+            builder: (context, dirty, _) => ListenableBuilder(
+              listenable: controller,
+              builder: (context, _) => Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(onPressed: dirty ? onCancel : null, child: const Text('Cancel')),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: dirty && cleanScript(controller.text).isNotEmpty ? onSave : null,
+                    child: const Text('Save'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          ],
           Expanded(
             child: TextField(
               controller: controller,
               focusNode: focus,
+              readOnly: demo,
               autofocus: true,
               maxLines: null,
               expands: true,
               textAlignVertical: TextAlignVertical.top,
               style: const TextStyle(fontSize: 18, height: 1.45),
-              onChanged: ref.read(studioProvider.notifier).setScript,
+              onChanged: (_) => onEdited(),
               decoration: InputDecoration(
                 hintText: 'Paste or type your script here…',
                 filled: true,
@@ -380,10 +479,12 @@ class _EditorPane extends ConsumerWidget {
 class _Inspector extends ConsumerWidget {
   const _Inspector({
     required this.caretWord,
+    required this.dirty,
     required this.onStart,
     required this.onPreferences,
   });
   final ValueNotifier<int> caretWord;
+  final ValueNotifier<bool> dirty;
   final VoidCallback onStart;
   final VoidCallback onPreferences;
 
@@ -490,12 +591,16 @@ class _Inspector extends ConsumerWidget {
                     ),
                     const SizedBox(height: 10),
                   ],
-                  FilledButton.icon(
-                    onPressed: empty ? null : onStart,
-                    icon: const Icon(Icons.play_arrow),
-                    label: Text('Start  $startKey'),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size.fromHeight(48),
+                  // Starting uses the saved script, so unsaved edits come first.
+                  ValueListenableBuilder<bool>(
+                    valueListenable: dirty,
+                    builder: (context, unsaved, _) => FilledButton.icon(
+                      onPressed: empty || unsaved ? null : onStart,
+                      icon: const Icon(Icons.play_arrow),
+                      label: Text('Start  $startKey'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
+                      ),
                     ),
                   ),
                 ],

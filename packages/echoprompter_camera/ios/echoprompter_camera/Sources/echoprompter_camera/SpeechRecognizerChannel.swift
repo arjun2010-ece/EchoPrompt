@@ -23,6 +23,7 @@ final class SpeechRecognizerChannel: NSObject, FlutterStreamHandler {
     private var generation = 0 // bumped whenever a session ends; callbacks of older ones are ignored
     private var running = false
     private var failures = 0 // consecutive service failures; five give up
+    private var lastError = ""
     private var restartTimes: [TimeInterval] = []
     private var idleTimer: Timer?
     private var lengthTimer: Timer?
@@ -36,6 +37,7 @@ final class SpeechRecognizerChannel: NSObject, FlutterStreamHandler {
     private static let maxSession: TimeInterval = 50 // Apple stops a task after about a minute
     private static let keepFrames: AVAudioFrameCount = 8000 // 0.5 s at 16 kHz
     private static let maxBias = 100
+    private static let dictationMessage = "Turn on Dictation in Settings > General > Keyboard to use Voice mode."
 
     init(camera: EchoprompterCameraPlugin) {
         self.camera = camera
@@ -158,10 +160,20 @@ final class SpeechRecognizerChannel: NSObject, FlutterStreamHandler {
         guard let error = error as NSError? else { return }
         // "No speech detected" (1110) and "retry" (203) just mean a quiet stretch.
         let quiet = error.domain == "kAFAssistantErrorDomain" && (error.code == 1110 || error.code == 203)
+        // Apple's recogniser refuses to work while Dictation is turned off; retrying can't help.
+        let dictationOff = error.localizedDescription.localizedCaseInsensitiveContains("dictation")
+            || (error.domain == "kLSRErrorDomain" && error.code == 201)
+            || (error.domain == "kAFAssistantErrorDomain" && error.code == 1101)
+        if dictationOff {
+            fail("unavailable", Self.dictationMessage)
+            stop()
+            return
+        }
         if !quiet {
             failures += 1
+            lastError = "\(error.domain) \(error.code)"
             if failures >= 5 {
-                fail("unavailable", "Speech recognition is not responding")
+                fail("unavailable", "Speech recognition is not responding (\(lastError))")
                 stop()
                 return
             }
