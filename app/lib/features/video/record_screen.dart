@@ -43,6 +43,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
   StreamSubscription<Map<Object?, Object?>>? _events;
   DateTime? _micStart;
   bool _opening = false;
+  // Android Voice mode: the prompter started as the screen opened, so the script shows before the camera.
+  bool _promptReady = false;
   // Android Voice mode: the microphone was listening when the app went to the background.
   bool _micWasOn = false;
   // Cached because `ref` can't be read in dispose().
@@ -88,6 +90,14 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
   }
 
   Future<void> _init() async {
+    // Android Voice mode's start-up is light, so its script shows at once, on black, and the camera fades
+    // in behind it once open (as in the reference). Audio mode transcribes its file on this thread, so it
+    // starts once the preview is up (below).
+    if (_micIsIndependent) {
+      await _beginPrompter();
+      if (!mounted) return;
+      setState(() => _promptReady = true);
+    }
     await _transitionDone();
     if (!mounted) return;
     final a = ref.read(analyticsProvider);
@@ -107,6 +117,12 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
       final type = e['type'];
       if (type == 'interrupted' || type == 'storage_full') _onStopped(null, '$type');
     });
+    if (_promptReady && mounted) {
+      // The script is already showing, so listening starts now instead of once the camera is up.
+      unawaited(_beginPrompter(listen: true));
+      await _startPreview();
+      return;
+    }
     await _startPreview();
     // Let the preview paint before the prompter does heavy start-up work
     // (e.g. transcribing the audio file in Audio mode) on the same thread.
@@ -346,11 +362,12 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
     final landscape = media.orientation == Orientation.landscape;
     final fraction = _dragFractions[landscape] ?? _fractionFor(landscape);
     final p = _preview;
+    final showScript = p != null || (_promptReady && _error == null);
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(fit: StackFit.expand, children: [
-        if (p == null && _error == null) const Center(child: CircularProgressIndicator(color: Colors.white54)),
+        if (!showScript && _error == null) const Center(child: CircularProgressIndicator(color: Colors.white54)),
         if (p != null)
           TweenAnimationBuilder<double>(
             tween: Tween(begin: 0, end: 1),
@@ -374,9 +391,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
           right: isAndroid ? 0 : 12,
           top: media.padding.top + 12,
           height: media.size.height * fraction,
-          // Appears together with the camera instead of before it.
+          // Appears together with the camera, or before it in Android Voice mode (see _init).
           child: AnimatedOpacity(
-            opacity: p == null ? 0 : 1,
+            opacity: showScript ? 1 : 0,
             duration: _fadeIn,
             child: Stack(children: [
             ClipRRect(
@@ -442,15 +459,20 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
               label: _recording ? 'Stop recording' : 'Start recording',
               child: GestureDetector(
                 onTap: p == null || _countdown != null ? null : () => _toggleRecord(landscape),
-                child: Container(
-                  width: _recordButtonSize,
-                  height: _recordButtonSize,
-                  decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 4)),
-                  padding: const EdgeInsets.all(6),
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Colors.red,
-                      borderRadius: BorderRadius.circular(_recording ? 3 : 40),
+                // Dimmed until the camera is up, since it can't record before then.
+                child: AnimatedOpacity(
+                  opacity: p == null ? 0.38 : 1,
+                  duration: _fadeIn,
+                  child: Container(
+                    width: _recordButtonSize,
+                    height: _recordButtonSize,
+                    decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 4)),
+                    padding: const EdgeInsets.all(6),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(_recording ? 3 : 40),
+                      ),
                     ),
                   ),
                 ),

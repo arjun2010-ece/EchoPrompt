@@ -36,6 +36,8 @@ class _ReadScreenState extends ConsumerState<ReadScreen> {
 
   bool _chrome = true;
   Timer? _hideTimer;
+  // Handed over to the Record screen, which keeps the system bars hidden and restores them itself.
+  bool _toRecord = false;
 
   @override
   void initState() {
@@ -53,7 +55,8 @@ class _ReadScreenState extends ConsumerState<ReadScreen> {
   @override
   void dispose() {
     _hideTimer?.cancel();
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    // Runs after the exit animation, when the Record screen may already be showing.
+    if (!_toRecord) SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 
@@ -104,6 +107,7 @@ class _ReadScreenState extends ConsumerState<ReadScreen> {
   }
 
   void _record() {
+    _toRecord = true;
     ref.read(prompterProvider.notifier).pause();
     Navigator.of(context).pop(true);
   }
