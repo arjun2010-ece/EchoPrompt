@@ -108,6 +108,22 @@ class _LibraryPage extends ConsumerWidget {
     return Scaffold(
       body: CustomScrollView(slivers: [
         SliverAppBar.large(
+          leadingWidth: 196,
+          leading: Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(left: 16),
+              child: Text(
+                'EchoPrompter',
+                maxLines: 1,
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontSize: 26,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
           title: const Text('Scripts'),
           actions: [
             IconButton(
