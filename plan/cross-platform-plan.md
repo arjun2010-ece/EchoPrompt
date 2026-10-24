@@ -1,4 +1,4 @@
-# Plan: EchoPrompt on every platform
+# Plan: EchoPrompter on every platform
 
 Status: Draft v6. The two core product requirements below define what "same functionality everywhere" means. Company and legal formalities are an optional **later** phase (Phase 5), so the first goal is to build, launch, and prove people will pay. This version adopts a fast-track approach: build everything in Phase 1, test manually in Phase 2, add analytics and paywall in Phase 3, release in Phase 4.
 Date: 2026-10-18
@@ -16,7 +16,7 @@ These two requirements settle the earlier conflict over "the same functionality 
 
 iOS doesn't allow an app to float over other apps, so R2 is the mobile equivalent of R1.
 
-**Scope:** take the EchoPrompt macOS proof of concept (`Sources/TelePrompterApp/TelePrompterApp.swift`) to these platforms, from one codebase:
+**Scope:** take the EchoPrompter macOS proof of concept (`Sources/TelePrompterApp/TelePrompterApp.swift`) to these platforms, from one codebase:
 - **macOS** (Mac App Store only)
 - **Windows** (Microsoft Store)
 - **iOS**
@@ -42,10 +42,10 @@ It must be ready for a paid release, with the paywall built in Stage 2.
 | Platforms | macOS, Windows, iOS, iPadOS, Android (phone + tablet). **No Linux.** |
 | Framework | **Flutter** (Dart, AOT-compiled to native machine code, Impeller rendering) |
 | Shared code | About 85–90%: UI, state, script storage, the word-matching engine, playback, paywall logic |
-| Native code | Small plugins: `echoprompt_window` (macOS Swift, Windows C++) for the overlay window, notch, click-through, and hide-from-capture; `echoprompt_camera` (iOS Swift, Android Kotlin) for video recording |
+| Native code | Small plugins: `echoprompter_window` (macOS Swift, Windows C++) for the overlay window, notch, click-through, and hide-from-capture; `echoprompter_camera` (iOS Swift, Android Kotlin) for video recording |
 | Speech recognition | **sherpa-onnx** streaming ASR. It runs on-device and offline, behaves the same on every platform, and is Apache-2.0. **English only at launch**; more languages ship as downloadable models later. |
 | State management | Riverpod |
-| Accounts | **Optional EchoPrompt account** (Sign in with Apple / Google / email link). It is needed only to share Pro across devices. |
+| Accounts | **Optional EchoPrompter account** (Sign in with Apple / Google / email link). It is needed only to share Pro across devices. |
 | Paywall (Stage 2) | 5 free scripts → **Monthly subscription (highlighted default)** or **Lifetime**. One purchase unlocks all of the user's devices. Subscriptions are re-verified at least every 30 days, and **30 days offline at most**, after which the paywall shows (§10.4). |
 | Billing | RevenueCat as the single source of truth: App Store (iOS + Mac App Store, shared through Universal Purchase), Google Play, and Paddle (merchant of record) for Windows |
 | Backend | Supabase: auth, Postgres, Edge Functions. It signs entitlement tokens, keeps the free-script counter, and proxies analytics. |
@@ -55,7 +55,7 @@ It must be ready for a paid release, with the paywall built in Stage 2.
 | Desktop overlay (R1) | One floating, always-on-top, click-through-capable prompter window, hidden from capture by default; Normal / Voice / Audio (§7.1) |
 | Mobile camera overlay (R2) | In-app front/back camera with the prompter overlay docked at the top; Normal / Voice / **Audio** while recording; portrait + landscape (§10.2) |
 | Licensing (Stage 2) | A simple proprietary EULA/Terms that **allows commercial use** (free tier included). The business/OEM licence and lawyer review are Phase 5 (§10.3). |
-| App ID | `com.echoprompt.app` on every platform. It is already the POC's bundle ID (§9.2). |
+| App ID | `com.echoprompter.app` on every platform. It is already the POC's bundle ID (§9.2). |
 | Swift POC | Stays at the repo root until feature parity, then moves to `legacy/macos-poc/` |
 
 **About "exact same functionality".** The core product is identical everywhere:
@@ -90,7 +90,7 @@ Taken from the current Swift code (about 2,760 lines):
    - **Voice:** live mic → streaming speech recognition → conservative word matching (`follow(spoken:)`, `hasPhraseConfirmation`) → `PromptReadingProgress` (confirmed and predicted index).
    - **Recorded audio:** audio file → offline transcription with word timestamps → `align(...)` to script indices → playback-synced highlighting with `pacingCeiling`.
 4. **Word-level UI:** completed words soften, the active word is orange and underlined, and upcoming words stay prominent. Auto-scroll keeps the current word in view.
-5. **Persistence:** `UserDefaults` settings (domain `com.echoprompt.app`) and scripts in `~/Documents/EchoPrompt Scripts`.
+5. **Persistence:** `UserDefaults` settings (domain `com.echoprompter.app`) and scripts in `~/Documents/EchoPrompter Scripts`.
 6. **Permissions:** microphone and speech recognition are requested only for the mode that needs them.
 
 The **matching algorithm** is the main IP and the hardest part to get right. It will be ported to pure Dart **first** and covered by tests (§7.3), and the duplicated `normalized()` will be merged into one function.
@@ -142,7 +142,7 @@ The spike in §8 Phase 0 includes **go/no-go checks** on the riskiest window fea
 No.
 - **React Native and MAUI** become technically possible without Linux. Both are still weaker on the **macOS** side, where our hardest features live (notch panel, window level above the menu bar, capture hiding).
 - **Flutter** remains the strongest fit.
-- **Bonus:** Flutter keeps a Linux build available later for little extra work. It would need only a small Linux implementation of `echoprompt_window` and a reduced feature set.
+- **Bonus:** Flutter keeps a Linux build available later for little extra work. It would need only a small Linux implementation of `echoprompter_window` and a reduced feature set.
 
 ---
 
@@ -216,8 +216,8 @@ TelePrompterApp/
 │   │   │   ├── speech/          # SpeechEngine, SherpaSpeechEngine, AppleSpeechEngine
 │   │   │   ├── audio/           # AudioInput (mic), AudioPlayback (file)
 │   │   │   ├── storage/         # ScriptLibrary (.txt files + JSON index), POC migration
-│   │   │   ├── window/          # PrompterWindow facade over echoprompt_window (desktop)
-│   │   │   ├── camera/          # VideoRecorder facade over echoprompt_camera (mobile) (§10.2)
+│   │   │   ├── window/          # PrompterWindow facade over echoprompter_window (desktop)
+│   │   │   ├── camera/          # VideoRecorder facade over echoprompter_camera (mobile) (§10.2)
 │   │   │   ├── account/         # optional sign-in (Supabase Auth)
 │   │   │   ├── billing/         # RevenueCat + Paddle checkout + backend token client
 │   │   │   ├── analytics/       # AnalyticsService + Firebase / Measurement Protocol sinks (§10.1)
@@ -234,11 +234,11 @@ TelePrompterApp/
 │   ├── macos/ windows/ ios/ android/   # Flutter runners (macOS has two flavours: direct, mas)
 │   └── pubspec.yaml
 ├── packages/
-│   ├── echoprompt_window/       # NEW: desktop window tricks
+│   ├── echoprompter_window/       # NEW: desktop window tricks
 │   │   ├── lib/                 # Dart API
 │   │   ├── macos/   (Swift)     # NSWindow level, notch frame, sharingType, ignoresMouseEvents, Spaces
 │   │   └── windows/ (C++)       # HWND_TOPMOST, WDA_EXCLUDEFROMCAPTURE, WS_EX_TRANSPARENT, monitors
-│   └── echoprompt_camera/       # NEW (Stage 2): camera + mic capture shared with speech recognition
+│   └── echoprompter_camera/       # NEW (Stage 2): camera + mic capture shared with speech recognition
 │       ├── ios/     (Swift)     # AVCaptureSession → AVAssetWriter + audio tap for the speech engine
 │       └── android/ (Kotlin)    # CameraX / MediaCodec + AudioRecord tap for the speech engine
 ├── backend/                     # NEW (Stage 2): Supabase project (SQL migrations + Edge Functions) (§10.4)
@@ -259,14 +259,14 @@ TelePrompterApp/
 | Paths / settings | `path_provider`, `shared_preferences` |
 | Permissions (mobile) | `permission_handler` |
 | Keep screen awake | `wakelock_plus` |
-| Desktop window basics | `window_manager` (size, position, always-on-top, frameless), extended by `echoprompt_window` |
+| Desktop window basics | `window_manager` (size, position, always-on-top, frameless), extended by `echoprompter_window` |
 | Crash reporting | `sentry_flutter` (**opt-in**, no script content ever sent) |
 | Account / backend (Stage 2) | `supabase_flutter` (Auth with Apple, Google, and email magic link; works on all four OSes over HTTP) |
 | IAP (Stage 2) | `purchases_flutter` (RevenueCat) on iOS, macOS (Mac App Store flavour), and Android. The direct macOS build and the Windows build use Paddle checkout, with entitlements read through the backend. |
 | Analytics (Stage 2) | `firebase_analytics` (iOS, Android, macOS); a small Dart GA4 Measurement Protocol client (Windows) |
 | Secure storage (Stage 2) | `flutter_secure_storage` (Keychain, Android Keystore, Windows DPAPI) for entitlement tokens and the free-script counter |
 | Connectivity (Stage 2) | `connectivity_plus` runs the subscription check as soon as the device is back online |
-| Camera preview (Stage 2) | Our own `echoprompt_camera` renders into a Flutter `Texture`. The stock `camera` package can't share the mic with speech recognition. |
+| Camera preview (Stage 2) | Our own `echoprompter_camera` renders into a Flutter `Texture`. The stock `camera` package can't share the mic with speech recognition. |
 
 ### 6.3 Invariants carried over from the POC
 
@@ -276,7 +276,7 @@ TelePrompterApp/
 4. Placement changes must **not** rebuild the prompter widget tree, so the reading position is kept.
 5. Starting the prompter saves the script.
 6. Scripts are readable `.txt` files in a user-visible folder:
-   - macOS (direct) and Windows: `~/Documents/EchoPrompt Scripts`
+   - macOS (direct) and Windows: `~/Documents/EchoPrompter Scripts`
    - macOS (Mac App Store): see the sandbox note in §9.1
    - iOS: app Documents, exposed in the Files app
    - Android: app-specific storage plus export/import through the Storage Access Framework
@@ -321,7 +321,7 @@ TelePrompterApp/
 
 ### 7.2 Mobile and tablet (R2): camera with a floating prompter
 
-A phone or tablet can't float a prompter over **other** apps the way a desktop can: iOS doesn't allow it. So on mobile **EchoPrompt itself provides the camera**, and the prompter floats over its preview. After writing a script, the user taps **Record** (the main button) or **Read**:
+A phone or tablet can't float a prompter over **other** apps the way a desktop can: iOS doesn't allow it. So on mobile **EchoPrompter itself provides the camera**, and the prompter floats over its preview. After writing a script, the user taps **Record** (the main button) or **Read**:
 
 | | **Record** (R2, primary) | **Read** (secondary) |
 |---|---|---|
@@ -356,7 +356,7 @@ Durations assume one full-time developer. Each phase ends with a working build o
 ### Phase 1: Build everything (≈8–10 weeks)
 
 Build all functionality across all platforms in parallel:
-1. Scaffold `app/`, `packages/echoprompt_window`, and `packages/echoprompt_camera`.
+1. Scaffold `app/`, `packages/echoprompter_window`, and `packages/echoprompter_camera`.
 2. Port `core/`: tokenizer, matcher, aligner, progress. Golden fixtures from the POC.
 3. Script Studio: editor, history, settings, library, import/export.
 4. **Desktop (R1, macOS + Windows):**
@@ -383,6 +383,7 @@ You test every platform, every mode, and match against the POC:
 - Voice mode: speech recognition latency, matching accuracy.
 - Recorded audio: transcription correctness, word timestamps, sync during playback.
 - Settings, themes, mirror, rotation.
+- Replace everywhere in the codebase from "Echo Prompter" to "Echo Prompter"
 - Script import/export.
 - Identify and fix bugs discovered during testing.
 
@@ -402,7 +403,7 @@ You test every platform, every mode, and match against the POC:
 4. **License & terms:** replace current `LICENSE` with "All rights reserved", add `TERMS.md` (commercial use allowed), and `THIRD_PARTY_NOTICES`.
 5. **Privacy policy:** on-device speech, no script upload, analytics/optional account/backend disclosures. Host on the web site (or standalone, your choice).
 6. Create store listings (text, screenshots, privacy labels, data safety).
-7. **Audio mode soundtrack (native):** write the chosen audio file as the video's own audio track in `packages/echoprompt_camera` (iOS `AVAssetWriter`, Android `MediaCodec`/`MediaMuxer`), replacing the interim Speaker route so the recorded sound is clean regardless of the room (§10.2).
+7. **Audio mode soundtrack (native):** write the chosen audio file as the video's own audio track in `packages/echoprompter_camera` (iOS `AVAssetWriter`, Android `MediaCodec`/`MediaMuxer`), replacing the interim Speaker route so the recorded sound is clean regardless of the room (§10.2).
 
 ### Phase 4: Polish + Release (≈2–3 weeks)
 
@@ -418,7 +419,7 @@ You test every platform, every mode, and match against the POC:
 
 ### Phase 5 (optional, later): Business formalisation
 
-Start this **only once EchoPrompt earns real money**. Suggested triggers:
+Start this **only once EchoPrompter earns real money**. Suggested triggers:
 - revenue reliably above roughly €1,000/month;
 - a B2B/OEM deal;
 - wanting to hire.
@@ -446,7 +447,7 @@ These decisions affect Phase 1 code, which is why they appear now.
 | iOS / iPadOS | App Store | App Store (RevenueCat). Universal Purchase shared with macOS. | Apple Developer Program |
 | Android | Google Play | Google Play Billing (RevenueCat) | Play App Signing; declare mic, camera, and later overlay permissions |
 
-**macOS specifics (Mac App Store):** App Sandbox is on. Entitlements: `audio-input`, `files.user-selected.read-write`, `network.client`. Scripts folder is inside the app container by default; user can choose any folder once (security-scoped bookmark). **POC migration:** existing users keep their scripts via the same bundle ID (`com.echoprompt.app`) in `UserDefaults`.
+**macOS specifics (Mac App Store):** App Sandbox is on. Entitlements: `audio-input`, `files.user-selected.read-write`, `network.client`. Scripts folder is inside the app container by default; user can choose any folder once (security-scoped bookmark). **POC migration:** existing users keep their scripts via the same bundle ID (`com.echoprompter.app`) in `UserDefaults`.
 
 **Accounts and costs for launch (all as an individual):**
 - Apple Developer Program, **Individual**: $99/yr, covers iOS + macOS.
@@ -470,19 +471,19 @@ These decisions affect Phase 1 code, which is why they appear now.
 4. **Tax on your income (Portugal):** before the first payout, open self-employed activity (*início de atividade*, category B, simplified regime) on the Portal das Finanças. It is free and online. Income is declared in your yearly IRS return. Store sales are B2B payouts to you, and they collect the consumer VAT. Check your VAT position (small-business exemption) on the portal when you open the activity, or with a one-off accountant consultation once money arrives.
 5. **Paddle (Windows only)** verifies your identity and website before approving payouts for the Windows build through Paddle checkout.
 
-**App ID: keep `com.echoprompt.app` everywhere.** It is already the POC's bundle ID, so:
+**App ID: keep `com.echoprompter.app` everywhere.** It is already the POC's bundle ID, so:
 - existing macOS users upgrade in place (same `UserDefaults` domain, same scripts);
 - iOS, iPadOS, and the Mac App Store app share it, which enables **Universal Purchase** (one App Store purchase for iPhone, iPad, and Mac);
-- the Android `applicationId` is `com.echoprompt.app`;
+- the Android `applicationId` is `com.echoprompter.app`;
 - the Windows MSIX identity is assigned when the app name is reserved in the Microsoft Store;
-- Firebase, RevenueCat, and Supabase projects are named `echoprompt-prod` and `echoprompt-dev`.
+- Firebase, RevenueCat, and Supabase projects are named `echoprompter-prod` and `echoprompter-dev`.
 
 **Reserve the IDs early.** It's free with the developer accounts:
 - register the bundle ID in the Apple Developer portal;
 - create the Play Console app and reserve the Microsoft Store app name.
 - Bundle and application IDs are first-come and **can never be changed** after release without losing users and purchases.
 
-**Before reserving:** do a free 10-minute name check for "EchoPrompt" in TMview (EU) and USPTO search. Filing a trademark is Phase 5.
+**Before reserving:** do a free 10-minute name check for "EchoPrompter" in TMview (EU) and USPTO search. Filing a trademark is Phase 5.
 
 ### 9.3 Paywall architecture
 The full design is in §10.4. Store rules that shape it:
@@ -507,7 +508,7 @@ The full design is in §10.4. Store rules that shape it:
 - [ ] The individual-launch items in §9.2: trader declaration, Play's 12-tester closed test, Apple Small Business Program, and opening activity at Finanças before the first payout.
 
 ### 9.5 Later (Phase 5, optional): business formalisation
-Do these **once EchoPrompt is earning**, typically above roughly €1,000/month, or before a B2B deal. None of them changes the app.
+Do these **once EchoPrompter is earning**, typically above roughly €1,000/month, or before a B2B deal. None of them changes the app.
 
 | Item | Why / when |
 |---|---|
@@ -637,10 +638,10 @@ The conflict: if the reference audio plays from the phone's speaker, the microph
 - **Sync:** playback, or the silent timeline, starts on the **first recorded video frame** after the countdown. Drift is corrected against the media clock, the same `pacingCeiling` logic as the POC.
 - **Product decision (updated):** in Audio mode the recorded video **must contain the audio file's sound**, and the prompter text doubles as a look-ahead cue (the current line plus the next 1-2 lines) so the presenter can act early, e.g. turn the camera toward the river before the narration reaches it. The Studio's Record button is the primary action for Voice and Audio; Normal uses Read (no camera or microphone). See `plan/mobile-ux-plan.md`.
   - **Interim (implemented):** Audio mode defaults to the **Speaker** route, so the microphone records the playback into the video. Quality depends on speaker volume and room acoustics.
-  - **Target (not started; scheduled in Phase 3, item 7):** write the audio file as the video's own audio track in the native encoder (`packages/echoprompt_camera`, iOS `AVAssetWriter` and Android `MediaCodec`/`MediaMuxer`), so the soundtrack is clean regardless of the room. Headphones then work for the presenter without affecting the video.
+  - **Target (not started; scheduled in Phase 3, item 7):** write the audio file as the video's own audio track in the native encoder (`packages/echoprompter_camera`, iOS `AVAssetWriter` and Android `MediaCodec`/`MediaMuxer`), so the soundtrack is clean regardless of the room. Headphones then work for the presenter without affecting the video.
 - **Saving:**
   - iOS: Photos (add-only permission).
-  - Android: `MediaStore` (DCIM/EchoPrompt).
+  - Android: `MediaStore` (DCIM/EchoPrompter).
   - Both: a copy in app storage, with a share sheet.
 - **Interruptions:** a phone call, the app going to the background, low storage, or thermal critical state each **stop and save** what has been recorded so far.
 - **Formats:** default 1080p30 H.264/AAC. 4K and HEVC are options on capable devices.
@@ -650,7 +651,7 @@ There are two hard parts:
 - **Voice mode needs the mic at the same time as the video recorder.**
 - **Audio mode needs playback and recording at the same time**, with playback routed to headphones while the input stays on the built-in mic.
 
-The stock Flutter `camera` plugin takes the mic exclusively and doesn't control audio routing, so we build `packages/echoprompt_camera`:
+The stock Flutter `camera` plugin takes the mic exclusively and doesn't control audio routing, so we build `packages/echoprompter_camera`:
 
 | | iOS / iPadOS | Android |
 |---|---|---|
@@ -677,12 +678,12 @@ Today's `LICENSE` is a *Personal Use* licence that **forbids commercial use**. I
 | Store EULA | Legal terms on the stores | **Apple:** use Apple's **standard EULA** (no upload needed), with `TERMS.md` linked from the paywall. **Google Play / Microsoft Store:** link `TERMS.md`. |
 
 v1 actions:
-- [ ] **Make the app source private.** The site links to a public GitHub repo (`arjun2010-ece/EchoPrompt`); anyone could otherwise build it without the paywall. Releases can still be hosted publicly. This costs nothing and protects revenue.
+- [ ] **Make the app source private.** The site links to a public GitHub repo (`arjun2010-ece/EchoPrompter`); anyone could otherwise build it without the paywall. Releases can still be hosted publicly. This costs nothing and protects revenue.
 - [ ] Replace `LICENSE` and add `TERMS.md`, plus `THIRD_PARTY_NOTICES` (required by the BSD, Apache, and MIT licences we use).
 
 **Later (Phase 5, once it earns money):**
 - a lawyer-reviewed **EULA** (Portuguese law, Portuguese-language version, EU Digital Content Directive wording);
-- a **business/OEM licence** (`COMMERCIAL-LICENSE.md`) for companies that want to embed or bulk-license EchoPrompt.
+- a **business/OEM licence** (`COMMERCIAL-LICENSE.md`) for companies that want to embed or bulk-license EchoPrompter.
 See §9.5.
 
 ### 10.4 Paywall
@@ -697,9 +698,9 @@ See §9.5.
 | **Lifetime** | Unlocks everything permanently, and the paywall never shows again on that account. Online checks only catch refunds and chargebacks, and **it never needs to be online**. |
 | **Monthly subscription** | Unlocks everything while paid. Verified on every launch and once a day while online. **It must be verified at least once every 30 days.** |
 | **Offline limit** (answer 8) | A subscriber can stay offline for at most **30 days since the last successful verification**. After that, the paywall shows ("Connect to the internet to confirm your subscription"), even though the device is offline. The moment the device reconnects, the app checks automatically. Paid → unlocked again for 30 more days. Not paid → stays blocked with "Renew to continue". |
-| **Advance warning** | A banner shows from day 25 offline: "Connect within N days to keep using EchoPrompt Pro". |
+| **Advance warning** | A banner shows from day 25 offline: "Connect within N days to keep using EchoPrompter Pro". |
 | **Live sessions** | A block **never interrupts** a running prompter or recording. It applies when that session ends, and the recording is always saved. |
-| **Cross-device** (answer 9) | One Pro purchase unlocks **all of the user's devices** (up to 5 active at once) when they sign in to an EchoPrompt account. Details below. |
+| **Cross-device** (answer 9) | One Pro purchase unlocks **all of the user's devices** (up to 5 active at once) when they sign in to an EchoPrompter account. Details below. |
 
 #### Entitlement state machine
 
@@ -788,8 +789,8 @@ A local counter alone resets on reinstall. Two layers fix that:
 ```
 
 - **Products** (the same IDs on every store):
-  - `echoprompt_pro_monthly`: auto-renewing, one month. **Default and highlighted.**
-  - `echoprompt_pro_lifetime`: non-consumable on the stores, one-time on Paddle (Windows).
+  - `echoprompter_pro_monthly`: auto-renewing, one month. **Default and highlighted.**
+  - `echoprompter_pro_lifetime`: non-consumable on the stores, one-time on Paddle (Windows).
   - Both grant the single entitlement **`pro`**.
 - **Store compliance:**
   - Restore Purchases button.
@@ -819,7 +820,7 @@ A local counter alone resets on reinstall. Two layers fix that:
 | Mac App Store review questions the capture-hiding or above-menu-bar window | Medium | Both use public APIs. Describe the feature clearly in review notes. If needed, ship the MAS flavour with the feature off and keep it in the direct build. |
 | Capture-hiding changes in a future OS (e.g. ScreenCaptureKit behaviour) | Medium | Best-effort wording, the verification matrix in each release checklist, and per-OS feature flags |
 | sherpa-onnx accuracy below Apple's on Mac/iOS | Medium | `SpeechEngine` interface. Use Apple's engine on Apple platforms if it wins the benchmark. |
-| Camera recording and speech recognition fight over the mic, or video and audio drift out of sync | High | Our own `echoprompt_camera` with one shared audio stream. Phase 0 spike 5 is a gate, and there is a remux fallback on Android. |
+| Camera recording and speech recognition fight over the mic, or video and audio drift out of sync | High | Our own `echoprompter_camera` with one shared audio stream. Phase 0 spike 5 is a gate, and there is a remux fallback on Android. |
 | Thermal throttling (recording + recognition + rendering) on older phones | Medium | Default 1080p30, thermal-state monitoring that lowers resolution or warns, and a 10-minute soak test in QA |
 | Audio mode while recording: reference playback leaks into the video, or the Bluetooth mic switch lowers quality | Medium | Headphones / silent pacing / explicit speaker option, with input pinned to the built-in mic (§10.2). Phase 0 spike 5 is the gate. |
 | R1 capture hiding fails with a particular recorder | Medium | Best-effort wording, a published support matrix from Phase 0 spike 2, and a re-test every release. On desktop the overlay can also simply be placed outside the captured window or region. |
@@ -841,7 +842,7 @@ A local counter alone resets on reinstall. Two layers fix that:
 | 2 | Mac channel | **Mac App Store only** (no direct download) | §9.1, §8 Phase 1 |
 | 3 | Languages | **English at launch**, more languages in later months | §5, Phase 3 |
 | 4 | Mobile full-screen vs. camera | Asked how recording works if the prompter is full-screen → mobile has **Record** (camera + floating overlay, R2) and **Read** (text only) | §7.2, §10.2 |
-| 5 | Company entity / bundle ID | Keep **`com.echoprompt.app`**. The company is now **deferred** (see R3). | §9.2 |
+| 5 | Company entity / bundle ID | Keep **`com.echoprompter.app`**. The company is now **deferred** (see R3). | §9.2 |
 | 6 | POC migration | **Yes** | §8 Phase 1, §9.1 |
 | 7 | After 5 free scripts | **Block starting the prompter; still allow reading and exporting scripts** | §10.4 |
 | 8 | Offline subscribers | **Maximum 30 days offline, then the paywall** | §10.4 |
@@ -867,9 +868,9 @@ Every decision marked "delegated" can be changed later. Prices and the free-tier
 After you approve this plan, implementation starts directly with **Phase 1: Build everything**. No spikes, no gates — straight to building across all platforms.
 
 **Before Phase 1 starts, handle these non-code tasks:**
-1. Free name check for "EchoPrompt" (TMview, USPTO search).
+1. Free name check for "EchoPrompter" (TMview, USPTO search).
 2. Create the **individual** developer accounts: Apple ($99/yr), Google Play ($25), and Microsoft Store (free). Join the Apple Small Business Program.
-3. Reserve `com.echoprompt.app` in the Apple Developer portal and Play Console, and reserve the app name in the Microsoft Store.
+3. Reserve `com.echoprompter.app` in the Apple Developer portal and Play Console, and reserve the app name in the Microsoft Store.
 4. Make the GitHub repo **private** before Phase 1 ships, so no one can build the app without the paywall.
 
 **During Phase 2 (testing & refinement):**

@@ -15,7 +15,7 @@ const modes = [
     number: "02",
     name: "Voice",
     eyebrow: "Speak naturally",
-    text: "EchoPrompt follows the words you say, pauses when you pause, and keeps the next line waiting for you.",
+    text: "EchoPrompter follows the words you say, pauses when you pause, and keeps the next line waiting for you.",
     detail: "Active word tracking with clear reading feedback",
   },
   {
@@ -29,9 +29,9 @@ const modes = [
 
 const questions = [
   {
-    question: "Does EchoPrompt work only on macOS?",
+    question: "Does EchoPrompter work only on macOS?",
     answer:
-      "Yes. EchoPrompt is a native macOS app built for macOS 13 Ventura and later. The website explains the desktop product and links visitors to its releases.",
+      "Yes. EchoPrompter is a native macOS app built for macOS 13 Ventura and later. The website explains the desktop product and links visitors to its releases.",
   },
   {
     question: "When does it ask for microphone access?",
@@ -46,7 +46,7 @@ const questions = [
   {
     question: "Where are my scripts saved?",
     answer:
-      "Scripts are saved locally as readable text files in Documents/EchoPrompt Scripts. The app does not require an account or its own cloud-storage service.",
+      "Scripts are saved locally as readable text files in Documents/EchoPrompter Scripts. The app does not require an account or its own cloud-storage service.",
   },
 ];
 
@@ -55,7 +55,7 @@ const structuredData = {
   "@graph": [
     {
       "@type": "SoftwareApplication",
-      name: "EchoPrompt",
+      name: "EchoPrompter",
       applicationCategory: "ProductivityApplication",
       operatingSystem: "macOS 13 Ventura or later",
       description:
@@ -95,9 +95,9 @@ export default function Home() {
     <main>
       <section className="hero" id="top">
         <nav className="nav shell" aria-label="Primary navigation">
-          <a className="brand" href="#top" aria-label="EchoPrompt home">
+          <a className="brand" href="#top" aria-label="EchoPrompter home">
             <span className="brand-mark" aria-hidden="true"><img src="/icon.png" alt="" /></span>
-            <span>EchoPrompt</span>
+            <span>EchoPrompter</span>
           </a>
           <div className="nav-links">
             <a href="#modes">Modes</a>
@@ -115,7 +115,7 @@ export default function Home() {
               A thoughtful teleprompter for the moments when your delivery matters more than your controls.
             </p>
             <div className="hero-actions">
-              <a className="button button-primary" href="#download">Download EchoPrompt <span aria-hidden="true">↓</span></a>
+              <a className="button button-primary" href="#download">Download EchoPrompter <span aria-hidden="true">↓</span></a>
               <a className="button button-quiet" href="#workflow">See how it works <span aria-hidden="true">→</span></a>
             </div>
             <div className="availability" aria-label="Product availability">
@@ -124,13 +124,13 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="prompt-stage" aria-label="EchoPrompt interface preview">
+          <div className="prompt-stage" aria-label="EchoPrompter interface preview">
             <div className="orb orb-one" />
             <div className="orb orb-two" />
             <div className="prompt-window">
               <div className="window-titlebar">
                 <span className="traffic"><b /><b /><b /></span>
-                <span className="window-app-brand"><img src="/icon.png" alt="" />EchoPrompt</span>
+                <span className="window-app-brand"><img src="/icon.png" alt="" />EchoPrompter</span>
                 <span className="window-status">VOICE CONTROL</span>
               </div>
               <div className="window-reading">
@@ -155,7 +155,7 @@ export default function Home() {
           <h2>Built to disappear<br />when it matters.</h2>
           <div>
             <p>
-              EchoPrompt gives your words a calm, considered place to live—close to the camera, above the work you are sharing, and ready when you are.
+              EchoPrompter gives your words a calm, considered place to live—close to the camera, above the work you are sharing, and ready when you are.
             </p>
             <a className="text-link" href="#modes">Explore the ways to present <span aria-hidden="true">→</span></a>
           </div>
@@ -222,7 +222,7 @@ export default function Home() {
             <p className="section-label">A quieter kind of software</p>
             <h2>Your script stays close.</h2>
           </div>
-          <p>EchoPrompt stores scripts on your Mac, asks for permissions only for the mode that needs them, and never requires an account to get started.</p>
+          <p>EchoPrompter stores scripts on your Mac, asks for permissions only for the mode that needs them, and never requires an account to get started.</p>
         </div>
       </section>
 
@@ -246,7 +246,7 @@ export default function Home() {
           <p className="section-label">Ready when you are</p>
           <h2>Bring your next<br /><em>great take</em> closer.</h2>
           <p>Download the native macOS app, open your script, and make space for the delivery.</p>
-          <a className="button button-primary" href="https://github.com/arjun2010-ece/EchoPrompt/releases/latest">Get EchoPrompt for macOS <span aria-hidden="true">↗</span></a>
+          <a className="button button-primary" href="https://github.com/arjun2010-ece/EchoPrompt/releases/latest">Get EchoPrompter for macOS <span aria-hidden="true">↗</span></a>
           <small>macOS 13 Ventura or later · Personal-use license</small>
         </div>
       </section>
@@ -254,8 +254,8 @@ export default function Home() {
       <footer className="footer">
         <div className="shell footer-inner">
           <div className="footer-branding">
-            <a className="brand" href="#top"><span className="brand-mark" aria-hidden="true"><img src="/icon.png" alt="" /></span><span>EchoPrompt</span></a>
-            <p>Made in Portugal by Arjun Sah <span aria-hidden="true">·</span> © 2026 EchoPrompt</p>
+            <a className="brand" href="#top"><span className="brand-mark" aria-hidden="true"><img src="/icon.png" alt="" /></span><span>EchoPrompter</span></a>
+            <p>Made in Portugal by Arjun Sah <span aria-hidden="true">·</span> © 2026 EchoPrompter</p>
           </div>
           <div className="footer-actions">
             <nav className="footer-links" aria-label="Footer navigation">
@@ -265,7 +265,7 @@ export default function Home() {
             </nav>
             {/*
               Replace this placeholder with the real channel URL when it is ready:
-              <a className="footer-youtube" href="https://youtube.com/@your-channel" aria-label="EchoPrompt on YouTube">
+              <a className="footer-youtube" href="https://youtube.com/@your-channel" aria-label="EchoPrompter on YouTube">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.6 7.2a2.9 2.9 0 0 0-2-2C17.8 4.7 12 4.7 12 4.7s-5.8 0-7.6.5a2.9 2.9 0 0 0-2 2A30 30 0 0 0 2 12a30 30 0 0 0 .4 4.8 2.9 2.9 0 0 0 2 2c1.8.5 7.6.5 7.6.5s5.8 0 7.6-.5a2.9 2.9 0 0 0 2-2A30 30 0 0 0 22 12a30 30 0 0 0-.4-4.8ZM9.7 15.3V8.7l5.7 3.3-5.7 3.3Z" /></svg>
               </a>
             */}

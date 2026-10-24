@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import 'package:echoprompt/services/speech/speech_engine.dart';
+import 'package:echoprompter/services/speech/speech_engine.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

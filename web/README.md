@@ -1,6 +1,6 @@
-Add something like this also# EchoPrompt web
+Add something like this also# EchoPrompter web
 
-The server-rendered Next.js marketing site for EchoPrompt. It is intentionally contained in `web/` so it can be deployed independently of the native macOS Swift app at the repository root.
+The server-rendered Next.js marketing site for EchoPrompter. It is intentionally contained in `web/` so it can be deployed independently of the native macOS Swift app at the repository root.
 
 ## Local development
 

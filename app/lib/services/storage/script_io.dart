@@ -12,8 +12,8 @@ import '../platform.dart';
 /// Script import/export. Mobile exports go through the share sheet, which on
 /// Android covers the Storage Access Framework and on iOS the Files app.
 class ScriptIO {
-  static const _importDirKey = 'EchoPrompt.lastImportDir.v1';
-  static const _exportDirKey = 'EchoPrompt.lastExportDir.v1';
+  static const _importDirKey = 'EchoPrompter.lastImportDir.v1';
+  static const _exportDirKey = 'EchoPrompter.lastExportDir.v1';
 
   /// Folder a picker opens in: the last one used (kept across launches) if it
   /// still exists, else [fallback], created on demand so the dialog can open

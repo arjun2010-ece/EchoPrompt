@@ -6,12 +6,12 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim().replace(/\/+$/, "");
 export const metadata: Metadata = {
   metadataBase: siteUrl ? new URL(siteUrl) : undefined,
   title: {
-    default: "EchoPrompt — Native macOS Teleprompter",
-    template: "%s | EchoPrompt",
+    default: "EchoPrompter — Native macOS Teleprompter",
+    template: "%s | EchoPrompter",
   },
   description:
     "A native macOS teleprompter with smooth scrolling, live voice following, and recorded-audio script synchronization.",
-  applicationName: "EchoPrompt",
+  applicationName: "EchoPrompter",
   keywords: [
     "macOS teleprompter",
     "teleprompter for Mac",
@@ -24,7 +24,7 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: "Arjun Sah" }],
   creator: "Arjun Sah",
-  publisher: "EchoPrompt",
+  publisher: "EchoPrompter",
   category: "Productivity",
   alternates: siteUrl ? { canonical: "/" } : undefined,
   robots: {
@@ -41,15 +41,15 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     locale: "en_US",
-    title: "EchoPrompt — Native macOS Teleprompter",
+    title: "EchoPrompter — Native macOS Teleprompter",
     description:
       "Stay on script with smooth scrolling, live voice following, and recorded-audio synchronization on your Mac.",
-    siteName: "EchoPrompt",
+    siteName: "EchoPrompter",
     url: siteUrl,
   },
   twitter: {
     card: "summary",
-    title: "EchoPrompt — Native macOS Teleprompter",
+    title: "EchoPrompter — Native macOS Teleprompter",
     description:
       "A thoughtful macOS teleprompter for normal scrolling, voice following, and recorded audio.",
   },

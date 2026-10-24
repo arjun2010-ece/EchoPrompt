@@ -1,6 +1,6 @@
-# EchoPrompt
+# EchoPrompter
 
-**EchoPrompt** is a native macOS teleprompter for presenters, educators, creators, and developers who want a focused script-reading experience without leaving their workflow. Write or paste a script in Script Studio, choose how it should advance, and present it in a floating, always-on-top prompt near the camera.
+**EchoPrompter** is a native macOS teleprompter for presenters, educators, creators, and developers who want a focused script-reading experience without leaving their workflow. Write or paste a script in Script Studio, choose how it should advance, and present it in a floating, always-on-top prompt near the camera.
 
 The app is built with SwiftUI and AppKit for macOS. It supports normal automatic scrolling, hands-free voice following, and recorded-audio playback synchronized to a matching script.
 
@@ -15,8 +15,8 @@ The app is built with SwiftUI and AppKit for macOS. It supports normal automatic
 - **Reading controls that adapt to the mode** — normal scrolling offers playback-rate controls; Voice and Recorded Audio modes are paced by their source instead.
 - **Prompt customization** — tune text size (16–110 pt), line spacing, prompt theme, studio appearance, prompt opacity, and mirrored text.
 - **Click-through presentation** — optionally let mouse clicks pass through the floating prompt to VS Code, a browser, or another app behind it.
-- **Local script library** — scripts are automatically stored as readable `.txt` files in `~/Documents/EchoPrompt Scripts`, with a recent-scripts picker for loading or deleting them.
-- **Recording-friendly workflow** — capture only the app or display you intend to show in OBS, ScreenFlow, QuickTime, or another recorder while reading EchoPrompt above it. EchoPrompt does not attempt to hide itself from screen-recording software.
+- **Local script library** — scripts are automatically stored as readable `.txt` files in `~/Documents/EchoPrompter Scripts`, with a recent-scripts picker for loading or deleting them.
+- **Recording-friendly workflow** — capture only the app or display you intend to show in OBS, ScreenFlow, QuickTime, or another recorder while reading EchoPrompter above it. EchoPrompter does not attempt to hide itself from screen-recording software.
 
 ## Modes
 
@@ -51,17 +51,17 @@ Use the supplied script for a packaged app with the required privacy declaration
 ./build-app.sh
 ```
 
-The script builds a release executable, creates `.build/EchoPrompt.app`, signs it locally, and opens it.
+The script builds a release executable, creates `.build/EchoPrompter.app`, signs it locally, and opens it.
 
 Use this packaged app to test Voice and Recorded Audio modes:
 
 ```sh
-open .build/EchoPrompt.app
+open .build/EchoPrompter.app
 ```
 
 > For public distribution, replace the ad-hoc signature with a proper Developer ID signing and notarization workflow.
 
-## Using EchoPrompt
+## Using EchoPrompter
 
 1. Open **Script Studio** and paste or write a script.
 2. Choose a follow mode in **Prompt behaviour**:
@@ -69,7 +69,7 @@ open .build/EchoPrompt.app
    - Select **Voice** to grant Speech Recognition and Microphone access before presenting.
    - Select **Audio**, then choose a local recording that matches the script.
 3. Adjust reading pace, text size, line spacing, theme, and studio appearance as needed.
-4. Press **Start EchoPrompt** or `⌘↩` to open the floating prompt.
+4. Press **Start EchoPrompter** or `⌘↩` to open the floating prompt.
 5. Use the on-screen controls:
    - **Normal:** slower, play/pause, and faster controls adjust reading pace.
    - **Voice:** start or stop listening; the prompt follows spoken words.
@@ -80,38 +80,38 @@ open .build/EchoPrompt.app
 
 ### Working over another app
 
-Enable **Presentation → Click through prompt** when you need to operate the app beneath EchoPrompt. The prompter stays visible, but clicks pass through it to the underlying window. Return to editing with **Edit script** or `⇧⌘E`.
+Enable **Presentation → Click through prompt** when you need to operate the app beneath EchoPrompter. The prompter stays visible, but clicks pass through it to the underlying window. Return to editing with **Edit script** or `⇧⌘E`.
 
 ## Scripts and local storage
 
-Starting EchoPrompt saves the current script locally. Saved scripts:
+Starting EchoPrompter saves the current script locally. Saved scripts:
 
 - appear in **Saved scripts**;
 - can be loaded back into Script Studio;
 - update their existing entry when an opened script is edited and started again;
-- are kept as `.txt` files in `~/Documents/EchoPrompt Scripts`;
+- are kept as `.txt` files in `~/Documents/EchoPrompter Scripts`;
 - can be deleted from the saved-scripts picker.
 
 The filename is derived from the first meaningful text in the script, rather than an opaque identifier.
 
 ## Privacy and permissions
 
-EchoPrompt asks for only the permissions required by the selected mode:
+EchoPrompter asks for only the permissions required by the selected mode:
 
 | Permission | When requested | Why |
 | --- | --- | --- |
 | Microphone | Voice mode | To receive live speech for script following |
 | Speech Recognition | Voice or Recorded Audio mode | To match spoken or recorded words to the script |
 
-Normal mode does not request microphone or speech-recognition access. Scripts and chosen recordings are read from local storage; EchoPrompt does not include an account system or its own cloud upload service. Speech recognition is provided by macOS and is subject to Apple’s system settings and availability.
+Normal mode does not request microphone or speech-recognition access. Scripts and chosen recordings are read from local storage; EchoPrompter does not include an account system or its own cloud upload service. Speech recognition is provided by macOS and is subject to Apple’s system settings and availability.
 
 ## Screen recording guidance
 
-EchoPrompt is designed to be a visible reading aid, not a screen-recorder bypass. For a tutorial or demo:
+EchoPrompter is designed to be a visible reading aid, not a screen-recorder bypass. For a tutorial or demo:
 
-1. Put EchoPrompt near the camera over the app you are demonstrating.
+1. Put EchoPrompter near the camera over the app you are demonstrating.
 2. Configure the recorder to capture only the demonstrated application/window or the intended display source.
-3. Keep EchoPrompt outside that chosen capture source.
+3. Keep EchoPrompter outside that chosen capture source.
 4. Use Click through prompt if you need to interact with the application beneath it.
 
 Always verify a short recording before publishing it.
@@ -135,4 +135,4 @@ Always verify a short recording before publishing it.
 
 ## License
 
-EchoPrompt is available under the [EchoPrompt Personal Use License](LICENSE). It may be used and modified for personal, non-commercial purposes only. Commercial use, resale, revenue-generating use, and relicensing are prohibited.
+EchoPrompter is available under the [EchoPrompter Personal Use License](LICENSE). It may be used and modified for personal, non-commercial purposes only. Commercial use, resale, revenue-generating use, and relicensing are prohibited.

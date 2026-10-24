@@ -72,7 +72,7 @@ fallback mode, scrolling that glides, backward navigation, and tolerance for rep
 ## What transfers and what does not
 
 1. **Sharing the microphone with our camera.** We record video with audio and recognize speech
-   from one shared stream (`echoprompt_camera`). iOS and macOS recognizers accept our sample
+   from one shared stream (`echoprompter_camera`). iOS and macOS recognizers accept our sample
    buffers, so this is easy there. On Android the system recognizer opens its own microphone by
    default and may fight our capture. `RecognizerIntent.EXTRA_AUDIO_SOURCE` lets a caller supply
    audio, but the Android version it needs and which recognizers honor it are **unverified**.
@@ -241,7 +241,7 @@ about 0.1 s as real.
 
 ## Licensing
 
-VoicePrompter's web app is GPL-3.0. Do not copy its code into EchoPrompt; derived code would have
+VoicePrompter's web app is GPL-3.0. Do not copy its code into EchoPrompter; derived code would have
 to be released under the same license. Reading it for ideas is fine.
 
 ## Sources

@@ -4,7 +4,7 @@
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <application
-        android:label="EchoPrompt"
+        android:label="EchoPrompter"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

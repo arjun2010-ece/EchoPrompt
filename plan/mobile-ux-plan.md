@@ -37,7 +37,7 @@ Voice and Audio also offer **Preview** (the Read screen, no camera) for rehearsa
 
 ### Audio mode sound
 - Today the camera plugin records the built-in mic only. To get the file's sound into the video, Audio mode defaults to the **Speaker** route (the mic picks up the playback). Headphones / Silent remain available in the Record menu, labelled "not in the video".
-- Known limit: this depends on speaker volume and room acoustics. The clean fix is already planned as Phase 3 in `cross-platform-plan.md`: write the file as the video's audio track in the native encoder. Needs native work in `echoprompt_camera` (iOS and Android); not started.
+- Known limit: this depends on speaker volume and room acoustics. The clean fix is already planned as Phase 3 in `cross-platform-plan.md`: write the file as the video's audio track in the native encoder. Needs native work in `echoprompter_camera` (iOS and Android); not started.
 
 ## Shared-code changes
 

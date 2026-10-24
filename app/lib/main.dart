@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:echoprompt_window/echoprompt_window.dart';
+import 'package:echoprompter_window/echoprompter_window.dart';
 
 import 'core/settings/prompt_settings.dart';
 import 'features/prompter/desktop_prompter_screen.dart';
@@ -14,7 +14,7 @@ import 'ui/mobile_theme.dart';
 import 'services/storage/migration.dart';
 import 'services/storage/script_library.dart';
 
-const crashReportingKey = 'EchoPrompt.crashReporting.v1';
+const crashReportingKey = 'EchoPrompter.crashReporting.v1';
 const _sentryDsn = String.fromEnvironment('SENTRY_DSN');
 
 Future<void> main() async {
@@ -26,7 +26,7 @@ Future<void> main() async {
     prefs: prefs,
     library: library,
     current: const PromptSettings(),
-    legacyDefaults: isDesktop ? await EchoPromptWindow.legacyDefaults() : const {},
+    legacyDefaults: isDesktop ? await EchoPrompterWindow.legacyDefaults() : const {},
   );
   if (migrated != null && prefs.getString(settingsKey) == null) {
     await prefs.setString(settingsKey, jsonEncodeSettings(migrated));
@@ -34,7 +34,7 @@ Future<void> main() async {
 
   Future<void> run() async => runApp(ProviderScope(
     overrides: [prefsProvider.overrideWithValue(prefs), libraryProvider.overrideWithValue(library)],
-    child: const EchoPromptApp(),
+    child: const EchoPrompterApp(),
   ));
 
   // Crash reporting is opt-in; no script content is ever attached.
@@ -68,14 +68,14 @@ ThemeData _theme(Brightness brightness) {
   );
 }
 
-class EchoPromptApp extends ConsumerWidget {
-  const EchoPromptApp({super.key});
+class EchoPrompterApp extends ConsumerWidget {
+  const EchoPrompterApp({super.key});
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final appearance = ref.watch(settingsProvider.select((s) => s.studioAppearance));
     final presenting = isDesktop && ref.watch(studioProvider.select((s) => s.presenting));
     return MaterialApp(
-      title: 'EchoPrompt',
+      title: 'EchoPrompter',
       debugShowCheckedModeBanner: false,
       theme: isDesktop ? _theme(Brightness.light) : mobileTheme(Brightness.light),
       darkTheme: isDesktop ? _theme(Brightness.dark) : mobileTheme(Brightness.dark),

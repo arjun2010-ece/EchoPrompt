@@ -66,7 +66,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Do not launch apps, start development servers, or request microphone/speech
   permissions unless needed for the requested task. When a bundled macOS
   build is needed without launching, use:
-  `ECHO_PROMPT_OPEN_AFTER_BUILD=0 ./build-app.sh`
+  `ECHO_PROMPTER_OPEN_AFTER_BUILD=0 ./build-app.sh`
 
 ## Completion and communication
 
@@ -84,7 +84,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Two independent projects share this repo:
 
-- **Root** — EchoPrompt, a native macOS 13+ teleprompter (SwiftUI + AppKit, Swift Package, no third-party dependencies). The package is named `EchoPrompt`; the target/source folder is still `TelePrompterApp`.
+- **Root** — EchoPrompter, a native macOS 13+ teleprompter (SwiftUI + AppKit, Swift Package, no third-party dependencies). The package is named `EchoPrompter`; the target/source folder is still `TelePrompterApp`.
 - **`web/`** — the Next.js (App Router, TypeScript) marketing site, deployed separately via Netlify (`netlify.toml` sets `base = "web"`).
 - **`Sources/`**  - it is old poc and sometimes considered as a reference when explcily specified. Currently our implementation is happening with flutter framework.
 
@@ -97,8 +97,8 @@ macOS app (run from repo root):
 ```sh
 swift build                          # debug build
 swift run                            # run bare executable (Normal mode only — see below)
-./build-app.sh                       # release build → .build/EchoPrompt.app, ad-hoc signed, then opens it
-ECHO_PROMPT_OPEN_AFTER_BUILD=0 ./build-app.sh   # build bundle without launching
+./build-app.sh                       # release build → .build/EchoPrompter.app, ad-hoc signed, then opens it
+ECHO_PROMPTER_OPEN_AFTER_BUILD=0 ./build-app.sh   # build bundle without launching
 ```
 
 Web site (run from `web/`):
@@ -115,14 +115,14 @@ npm run build    # also the Netlify build command
 
 All app code lives in one file: `Sources/TelePrompterApp/TelePrompterApp.swift`.
 
-- **`PrompterModel`** (single `ObservableObject`, created in `EchoPromptApp`) owns all settings, the script, the saved-script history, and the floating prompt window. It owns one `VoiceScrollController` and one `RecordedAudioController`.
+- **`PrompterModel`** (single `ObservableObject`, created in `EchoPrompterApp`) owns all settings, the script, the saved-script history, and the floating prompt window. It owns one `VoiceScrollController` and one `RecordedAudioController`.
 - **Two windows**: Script Studio (`EditorView` in the SwiftUI `WindowGroup`) and the prompt, a borderless non-activating `PromptPanel` (`NSPanel` subclass, all Spaces) hosting `PromptView` via `NSHostingView`. `applyPlacement(animated:)` reconfigures its level/frame for the Notch, Corner, or Floating placement (`PromptPlacement`), and `PromptView` switches between `.full`, `.compact`, and `.notch` layouts. `hideFromScreenCapture` sets `sharingType = .none` on the panel (best-effort); popovers need `CaptureVisibilityProbe` because they are separate windows. Spec: `.claude/specs/prompter-invisibility-and-placement.md`. `openPrompter()` hides the studio window and shows the panel; `closePrompter()`/`restoreWorkspace()` reverse it. Click-through is implemented with `panel.ignoresMouseEvents`.
 - **The panel is created once and reused.** `presentationSessionID` is regenerated on every `openPrompter()` and is the signal `PromptView` must use to reset scroll position, highlighting, and playback state — preserve this when changing prompt state.
-- `AppDelegate` and the `.restoreEchoPromptWorkspace` notification handle Dock-reopen / `⇧⌘E` behavior (don't restore the studio while a prompt panel is visible).
+- `AppDelegate` and the `.restoreEchoPrompterWorkspace` notification handle Dock-reopen / `⇧⌘E` behavior (don't restore the studio while a prompt panel is visible).
 - **Three modes** (`PromptControlMode`): Normal (timer-based scrolling at `speed`), Voice (`VoiceScrollController`: `AVAudioEngine` tap + `SFSpeechAudioBufferRecognitionRequest`, publishes `newWords`), Recorded audio (`RecordedAudioController`: `AVAudioPlayer` + `SFSpeechURLRecognitionRequest`, maps timestamped transcript tokens to script word indices). Word highlighting state is expressed via `PromptReadingProgress`.
 - **Matching is deliberately conservative**: short/common words only advance when they are the next expected word, and jumps require nearby phrase confirmation. Favor falling behind over skipping ahead when modifying this logic. Note that `normalized(_:)` is duplicated in `RecordedAudioController` and `PromptView`.
 - Normal mode must never touch `AVAudioEngine.inputNode` (it can trigger a microphone prompt) — see `hasActiveAudioTap`.
-- **Persistence**: script history metadata is JSON in `UserDefaults` (`EchoPrompt.scriptHistory.v1`, max 20 entries); script bodies are written as `.txt` files to `~/Documents/EchoPrompt Scripts`, with filenames derived from the script's first lines. Starting the prompter saves the script.
+- **Persistence**: script history metadata is JSON in `UserDefaults` (`EchoPrompter.scriptHistory.v1`, max 20 entries); script bodies are written as `.txt` files to `~/Documents/EchoPrompter Scripts`, with filenames derived from the script's first lines. Starting the prompter saves the script.
 
 ### Permissions gotcha
 
@@ -130,7 +130,7 @@ Voice and Recorded Audio modes need `NSMicrophoneUsageDescription` / `NSSpeechRe
 
 ## Shared assets
 
-`Assets/EchoPromptAppIcon.png` is the single source icon: `build-app.sh` converts it to `.icns`, and `web/app/icon.png` is an identical copy used as the site favicon. Update both together.
+`Assets/EchoPrompterAppIcon.png` is the single source icon: `build-app.sh` converts it to `.icns`, and `web/app/icon.png` is an identical copy used as the site favicon. Update both together.
 
 ## Web site notes
 

@@ -1,7 +1,7 @@
 # Spec: Capture-invisible prompter & flexible placement
 
 Status: Draft, ready for implementation
-Target: EchoPrompt macOS app (`Sources/TelePrompterApp/TelePrompterApp.swift`), macOS 13+
+Target: EchoPrompter macOS app (`Sources/TelePrompterApp/TelePrompterApp.swift`), macOS 13+
 Date: 2026-10-16
 
 ## 1. Summary
@@ -37,7 +37,7 @@ Both features apply only to the prompt `NSPanel`. Script Studio doesn't change, 
 ### 3.1 Capture invisibility
 - The only public lever is `NSWindow.sharingType = .none`. It tells the WindowServer to leave the window out of captures made by **other** processes.
 - **Legacy capture APIs** (`CGWindowListCreateImage`, `CGDisplayStream`, the older Zoom and Teams capture paths) reliably honor it.
-- **ScreenCaptureKit** (SCK) honors it inconsistently. There are reports that the window is excluded when a stream starts but appears after the content filter is rebuilt, and anecdotal reports that macOS 15 changed the behavior. The capturing app owns its `SCContentFilter`, so EchoPrompt can't force the exclusion.
+- **ScreenCaptureKit** (SCK) honors it inconsistently. There are reports that the window is excluded when a stream starts but appears after the content filter is rebuilt, and anecdotal reports that macOS 15 changed the behavior. The capturing app owns its `SCContentFilter`, so EchoPrompter can't force the exclusion.
 - **Consequence:** the feature is **best-effort**. The UI must not promise "100% invisible". Proposed copy: *"Hide from screen sharing & recordings. Works with most apps. Run a test recording before going live."*
 - `sharingType` is set per window. Popovers (`NSPopover`), tooltip windows, sheets and menus create their **own** windows and do **not** inherit it (see §5.3).
 - A hidden window also disappears from the presenter's own screenshots (⇧⌘3/4/5). This is expected, and the help text should mention it.
@@ -55,7 +55,7 @@ Both features apply only to the prompt `NSPanel`. Script Studio doesn't change, 
 
 ## 4. Data model
 
-Add to `PrompterModel`. Each property is `@Published` and persisted in `UserDefaults` with keys under the `EchoPrompt.` prefix.
+Add to `PrompterModel`. Each property is `@Published` and persisted in `UserDefaults` with keys under the `EchoPrompter.` prefix.
 
 ```swift
 enum PromptPlacement: String, CaseIterable, Identifiable, Codable {
@@ -73,13 +73,13 @@ enum PromptLayoutStyle { case full, compact, notch }   // derived, not persisted
 
 | Property | Type | Default | UserDefaults key |
 |---|---|---|---|
-| `hideFromScreenCapture` | `Bool` | `true` | `EchoPrompt.hideFromCapture.v1` |
-| `placement` | `PromptPlacement` | `.floating` (current behavior) | `EchoPrompt.placement.v1` |
-| `corner` | `PromptCorner` | `.topRight` | `EchoPrompt.corner.v1` |
-| `cornerSize` | `CGSize` | `420 × 240` | `EchoPrompt.cornerSize.v1` |
-| `notchSize` | `CGSize` (width/height of the expanded body below the notch) | `560 × 150` | `EchoPrompt.notchSize.v1` |
-| `floatingFrames` | `[String: CGRect]` keyed by display identifier | empty, falling back to today's 900×360 frame 40 pt below the top center | `EchoPrompt.floatingFrames.v1` |
-| `targetDisplayID` | `String?` (see §6.5) | `nil`, meaning the screen of the Studio window, then `NSScreen.main` | `EchoPrompt.targetDisplay.v1` |
+| `hideFromScreenCapture` | `Bool` | `true` | `EchoPrompter.hideFromCapture.v1` |
+| `placement` | `PromptPlacement` | `.floating` (current behavior) | `EchoPrompter.placement.v1` |
+| `corner` | `PromptCorner` | `.topRight` | `EchoPrompter.corner.v1` |
+| `cornerSize` | `CGSize` | `420 × 240` | `EchoPrompter.cornerSize.v1` |
+| `notchSize` | `CGSize` (width/height of the expanded body below the notch) | `560 × 150` | `EchoPrompter.notchSize.v1` |
+| `floatingFrames` | `[String: CGRect]` keyed by display identifier | empty, falling back to today's 900×360 frame 40 pt below the top center | `EchoPrompter.floatingFrames.v1` |
+| `targetDisplayID` | `String?` (see §6.5) | `nil`, meaning the screen of the Studio window, then `NSScreen.main` | `EchoPrompter.targetDisplay.v1` |
 
 Derived: `layoutStyle` is `.notch` for notch placement, `.compact` for corner placement, `.full` for floating placement. One exception: floating at a width under 560 pt or a height under 260 pt uses `.compact` (see §7.2).
 
@@ -110,7 +110,7 @@ Add a small `NSViewRepresentable`, `CaptureVisibilityProbe`, whose `NSView` subc
   - Subtitle: "Viewers and recordings won't see the prompter in most apps."
 - **Settings window:** the same toggle, plus a line explaining that it also hides the prompter from the presenter's own screenshots.
 - **Recording tip banner:** the current text is "capture your browser or app window—not the floating prompter". Make it conditional:
-  - Hiding on: "EchoPrompt is hidden from screen sharing. Do a 10-second test recording in your meeting app before going live."
+  - Hiding on: "EchoPrompter is hidden from screen sharing. Do a 10-second test recording in your meeting app before going live."
   - Hiding off: keep the current text.
 - **Prompter:** a small `eye.slash` badge in the header (full layout) or the hover bar (compact and notch layouts) shows that hiding is active. Clicking it toggles the setting.
 
@@ -150,7 +150,7 @@ final class PromptPanel: NSPanel {
 - `isOpaque = false`, `backgroundColor = .clear`, `hasShadow` set per placement. SwiftUI draws the rounded-rectangle chrome.
 - `isReleasedWhenClosed = false`, `hidesOnDeactivate = false`.
 - Collection behavior: keep `[.canJoinAllSpaces, .fullScreenAuxiliary]` and add `.stationary` and `.ignoresCycle`.
-- Being non-activating means clicking the prompter during a Zoom call doesn't pull EchoPrompt or Studio forward. Because `canBecomeKey` is true, the Space and Esc shortcuts still work while the panel is key.
+- Being non-activating means clicking the prompter during a Zoom call doesn't pull EchoPrompter or Studio forward. Because `canBecomeKey` is true, the Space and Esc shortcuts still work while the panel is key.
 - The titlebar close button goes away. Closing happens through "Edit script", Esc, or the new ✕ in compact layouts. All of them go through `closePrompter()`, which also fixes today's path where the red close button skips `restoreWorkspace()`.
 
 ### 6.2 Applying a placement

@@ -1,4 +1,4 @@
-name: echoprompt
+name: echoprompter
 description: "A new Flutter project."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -30,10 +30,10 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  echoprompt_window:
-    path: ../packages/echoprompt_window
-  echoprompt_camera:
-    path: ../packages/echoprompt_camera
+  echoprompter_window:
+    path: ../packages/echoprompter_window
+  echoprompter_camera:
+    path: ../packages/echoprompter_camera
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.

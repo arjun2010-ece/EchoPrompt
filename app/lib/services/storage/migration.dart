@@ -7,7 +7,7 @@ import '../../core/script/saved_script.dart';
 import '../../core/settings/prompt_settings.dart';
 import 'script_library.dart';
 
-const _migratedKey = 'EchoPrompt.migratedFromPoc.v1';
+const _migratedKey = 'EchoPrompter.migratedFromPoc.v1';
 
 /// One-time import for users upgrading from the Swift proof of concept. The
 /// bundle ID is unchanged, so scripts are still in the scripts folder; the

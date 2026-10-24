@@ -60,7 +60,7 @@ Not yet intuitive. The underlying engine (modes, matching, overlay, capture hidi
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ EchoPrompt                                   [Import] [Export] [Folder]  ⚙   │
+│ EchoPrompter                                   [Import] [Export] [Folder]  ⚙   │
 ├───────────────┬───────────────────────────────┬──────────────────────────────┤
 │ SCRIPTS    ＋ │ Your script        412 words · ~3 min                         │
 │ ───────────── │ ┌───────────────────────────┐ │  LIVE PREVIEW                │
@@ -140,7 +140,7 @@ COMPACT / NOTCH (controls appear on hover)
 |---|---|---|
 | Overlay | ✕ button, **Esc**, ⌘W / Ctrl+W | ⌘Q / Alt+F4 when the overlay has focus |
 | Any app (overlay unfocused) | Global shortcut (§3.6) | Menu bar / tray → Quit |
-| **macOS menu bar icon** (new) | "Back to Script Studio" | "Quit EchoPrompt ⌘Q" |
+| **macOS menu bar icon** (new) | "Back to Script Studio" | "Quit EchoPrompter ⌘Q" |
 | **Windows tray icon** (new) | "Back to Script Studio" | "Exit" |
 | Studio window | — | Standard close/quit (closing the Studio window on macOS keeps the app in the Dock, as now) |
 
@@ -162,7 +162,7 @@ Click-through (and the Lock button that replaced it) is gone. It only helped whe
 | Show/hide prompter | ⌃⌥P | Ctrl+Alt+P |
 | Back to Script Studio | ⇧⌘E (existing) | Ctrl+Shift+E |
 
-Implementation: `RegisterHotKey` on Windows; Carbon `RegisterEventHotKey` on macOS (needs no Accessibility permission). Both go in `echoprompt_window`. All are configurable in Preferences → Shortcuts. Local shortcuts while the overlay has focus stay as now: Space, Esc, plus ↑/↓ for speed and ⌘+/⌘− for text size.
+Implementation: `RegisterHotKey` on Windows; Carbon `RegisterEventHotKey` on macOS (needs no Accessibility permission). Both go in `echoprompter_window`. All are configurable in Preferences → Shortcuts. Local shortcuts while the overlay has focus stay as now: Space, Esc, plus ↑/↓ for speed and ⌘+/⌘− for text size.
 
 ### 3.7 First run (≤ 3 screens' worth of attention)
 
@@ -221,7 +221,7 @@ Ordered so each step ships something visible.
 - *Edit script* returns with the editor caret at the last reading position.
 
 ### Step 5: menu bar / tray + global shortcuts
-- `echoprompt_window`: `NSStatusItem` (macOS) and `Shell_NotifyIcon` (Windows) with a menu driven from Dart; `RegisterEventHotKey` / `RegisterHotKey`.
+- `echoprompter_window`: `NSStatusItem` (macOS) and `Shell_NotifyIcon` (Windows) with a menu driven from Dart; `RegisterEventHotKey` / `RegisterHotKey`.
 
 ### Step 6: first-run polish
 - Sample script, Position tip, first-Start toast, Studio empty state.
@@ -252,7 +252,7 @@ Ordered so each step ships something visible.
 
 ## 8. Implementation status (2026-10-18)
 
-Steps 0–6 of §5 are implemented in `app/` and `packages/echoprompt_window/`.
+Steps 0–6 of §5 are implemented in `app/` and `packages/echoprompter_window/`.
 
 **Where things live**
 
@@ -263,7 +263,7 @@ Steps 0–6 of §5 are implemented in `app/` and `packages/echoprompt_window/`.
 | Step 2: Studio + live preview | `features/studio/desktop_studio_screen.dart`, `features/studio/prompt_preview.dart` (`PromptSurface.previewWordIndex`) |
 | Step 3: Preferences | `features/settings/preferences_screen.dart` |
 | Step 4: overlay controls + exits | `features/prompter/desktop_prompter_screen.dart` |
-| Step 5: tray, global shortcuts | Dart: `echoprompt_window.dart`, `core/shortcuts/shortcut_binding.dart`. Native: `EchopromptWindowPlugin.swift` (`NSStatusItem`, Carbon `RegisterEventHotKey`), `echoprompt_window_plugin.cpp` (`Shell_NotifyIconW`, `RegisterHotKey`) |
+| Step 5: tray, global shortcuts | Dart: `echoprompter_window.dart`, `core/shortcuts/shortcut_binding.dart`. Native: `EchoprompterWindowPlugin.swift` (`NSStatusItem`, Carbon `RegisterEventHotKey`), `echoprompter_window_plugin.cpp` (`Shell_NotifyIconW`, `RegisterHotKey`) |
 | Step 6: first run | sample script (`StudioNotifier.welcome`), position tip, first-start banner |
 
 **Also fixed along the way**

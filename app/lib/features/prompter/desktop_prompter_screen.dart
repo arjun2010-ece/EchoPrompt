@@ -4,7 +4,7 @@ import 'dart:io' show Platform, exit;
 import 'dart:math' as math;
 import 'dart:ui' show AppExitType;
 
-import 'package:echoprompt_window/echoprompt_window.dart';
+import 'package:echoprompter_window/echoprompter_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -23,7 +23,7 @@ import 'prompter_controller.dart';
 const _accent = Color(0xFF0A84FF);
 const _baseSpeed = 24.0;
 const _speedSteps = [0.75, 0.85, 1.0, 1.15, 1.25, 1.5, 1.75, 2.0];
-const _firstStartToastKey = 'EchoPrompt.firstStartToast.v1';
+const _firstStartToastKey = 'EchoPrompter.firstStartToast.v1';
 
 bool get _mac => isMacOS;
 
@@ -60,15 +60,15 @@ class _DesktopPrompterScreenState extends ConsumerState<DesktopPrompterScreen> {
   void initState() {
     super.initState();
     _subscriptions
-      ..add(EchoPromptWindow.frameChanges.listen(_onFrame))
-      ..add(EchoPromptWindow.trayActions.listen(_onCommand))
-      ..add(EchoPromptWindow.hotkeys.listen(_onCommand));
-    EchoPromptWindow.hasHardwareNotch.then((v) {
+      ..add(EchoPrompterWindow.frameChanges.listen(_onFrame))
+      ..add(EchoPrompterWindow.trayActions.listen(_onCommand))
+      ..add(EchoPrompterWindow.hotkeys.listen(_onCommand));
+    EchoPrompterWindow.hasHardwareNotch.then((v) {
       if (!mounted) return;
       setState(() => _hasNotch = v);
       _syncTray();
     }, onError: (_) {});
-    EchoPromptWindow.supportsCaptureHiding.then(
+    EchoPrompterWindow.supportsCaptureHiding.then(
       (v) => mounted ? setState(() => _captureHidingSupported = v) : null,
       onError: (_) {},
     );
@@ -85,8 +85,8 @@ class _DesktopPrompterScreenState extends ConsumerState<DesktopPrompterScreen> {
       s.cancel();
     }
     _bannerTimer?.cancel();
-    EchoPromptWindow.unregisterHotkeys();
-    EchoPromptWindow.setTrayMenu(null);
+    EchoPrompterWindow.unregisterHotkeys();
+    EchoPrompterWindow.setTrayMenu(null);
     _window.exit();
     super.dispose();
   }
@@ -225,16 +225,16 @@ class _DesktopPrompterScreenState extends ConsumerState<DesktopPrompterScreen> {
     ref.read(studioProvider.notifier).stopPresenting(wordIndex: word);
     await WidgetsBinding.instance.endOfFrame;
     await Future<void>.delayed(const Duration(milliseconds: 50));
-    EchoPromptWindow.revealStudio();
+    EchoPrompterWindow.revealStudio();
   }
 
   void _quit() {
     ref.read(prompterProvider.notifier).pause();
     // Engine shutdown can take a few seconds on Windows; hide the window and
     // tray icon first so quitting looks instant.
-    unawaited(EchoPromptWindow.setPrompterVisible(false));
-    EchoPromptWindow.unregisterHotkeys();
-    EchoPromptWindow.setTrayMenu(null);
+    unawaited(EchoPrompterWindow.setPrompterVisible(false));
+    EchoPrompterWindow.unregisterHotkeys();
+    EchoPrompterWindow.setTrayMenu(null);
     // Windows keeps the busy cursor for seconds while the engine shuts down
     // gracefully, so end the process once the window is gone.
     if (Platform.isWindows) {
@@ -279,7 +279,7 @@ class _DesktopPrompterScreenState extends ConsumerState<DesktopPrompterScreen> {
 
   Future<void> _registerHotkeys() async {
     final bindings = ref.read(shortcutsProvider);
-    await EchoPromptWindow.registerHotkeys([
+    await EchoPrompterWindow.registerHotkeys([
       for (final e in bindings.entries)
         HotkeyBinding(e.key.name, e.value.key, {for (final m in e.value.mods) m.name}),
     ]);
@@ -301,12 +301,12 @@ class _DesktopPrompterScreenState extends ConsumerState<DesktopPrompterScreen> {
       TrayItem('place:floating', 'Position: Floating', checked: s.placement == PromptPlacement.floating),
       const TrayItem.separator(),
       const TrayItem('backToStudio', 'Back to Script Studio'),
-      const TrayItem('quit', 'Quit EchoPrompt'),
+      const TrayItem('quit', 'Quit EchoPrompter'),
     ];
     final signature = items.map((i) => '${i.id}|${i.title}|${i.enabled}|${i.checked}').join(';');
     if (signature == _lastTray) return;
     _lastTray = signature;
-    await EchoPromptWindow.setTrayMenu(items);
+    await EchoPrompterWindow.setTrayMenu(items);
   }
 
   // --- layout choice ---------------------------------------------------------
@@ -431,9 +431,9 @@ class _DesktopPrompterScreenState extends ConsumerState<DesktopPrompterScreen> {
 
   Widget _surface(PromptLayoutStyle style) => PromptSurface(
     style: style,
-    onDragStart: EchoPromptWindow.gestureBegin,
-    onDragUpdate: EchoPromptWindow.dragUpdate,
-    onDragEnd: EchoPromptWindow.gestureEnd,
+    onDragStart: EchoPrompterWindow.gestureBegin,
+    onDragUpdate: EchoPrompterWindow.dragUpdate,
+    onDragEnd: EchoPrompterWindow.gestureEnd,
     coveredByDesktopChrome: style == PromptLayoutStyle.full,
   );
 
@@ -530,9 +530,9 @@ class _DesktopPrompterScreenState extends ConsumerState<DesktopPrompterScreen> {
     cursor: SystemMouseCursors.resizeUpDown,
     child: GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onPanStart: (_) => EchoPromptWindow.gestureBegin(),
-      onPanUpdate: (_) => EchoPromptWindow.resizeUpdate('b'),
-      onPanEnd: (_) => EchoPromptWindow.gestureEnd(),
+      onPanStart: (_) => EchoPrompterWindow.gestureBegin(),
+      onPanUpdate: (_) => EchoPrompterWindow.resizeUpdate('b'),
+      onPanEnd: (_) => EchoPrompterWindow.gestureEnd(),
       child: SizedBox(
         height: 12,
         child: Center(
@@ -568,9 +568,9 @@ class _DesktopPrompterScreenState extends ConsumerState<DesktopPrompterScreen> {
         cursor: cursor,
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
-          onPanStart: (_) => EchoPromptWindow.gestureBegin(),
-          onPanUpdate: (_) => EchoPromptWindow.resizeUpdate(edge),
-          onPanEnd: (_) => EchoPromptWindow.gestureEnd(),
+          onPanStart: (_) => EchoPrompterWindow.gestureBegin(),
+          onPanUpdate: (_) => EchoPrompterWindow.resizeUpdate(edge),
+          onPanEnd: (_) => EchoPrompterWindow.gestureEnd(),
         ),
       ),
     );
@@ -649,9 +649,9 @@ class _DesktopPrompterScreenState extends ConsumerState<DesktopPrompterScreen> {
     final pr = ref.watch(prompterProvider);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onPanStart: (_) => EchoPromptWindow.gestureBegin(),
-      onPanUpdate: (_) => EchoPromptWindow.dragUpdate(),
-      onPanEnd: (_) => EchoPromptWindow.gestureEnd(),
+      onPanStart: (_) => EchoPrompterWindow.gestureBegin(),
+      onPanUpdate: (_) => EchoPrompterWindow.dragUpdate(),
+      onPanEnd: (_) => EchoPrompterWindow.gestureEnd(),
       child: Container(
         color: Colors.black.withValues(alpha: 0.96),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -924,7 +924,7 @@ class _DesktopPrompterScreenState extends ConsumerState<DesktopPrompterScreen> {
       MenuItemButton(
         leadingIcon: const Icon(Icons.power_settings_new, size: 16),
         onPressed: _quit,
-        child: const Text('Quit EchoPrompt'),
+        child: const Text('Quit EchoPrompter'),
       ),
     ],
     builder: (context, controller, _) => _HoverIconButton(

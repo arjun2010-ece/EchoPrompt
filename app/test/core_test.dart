@@ -1,7 +1,7 @@
-import 'package:echoprompt/core/matching/audio_aligner.dart';
-import 'package:echoprompt/core/matching/voice_matcher.dart';
-import 'package:echoprompt/core/progress/reading_progress.dart';
-import 'package:echoprompt/core/script/text.dart';
+import 'package:echoprompter/core/matching/audio_aligner.dart';
+import 'package:echoprompter/core/matching/voice_matcher.dart';
+import 'package:echoprompter/core/progress/reading_progress.dart';
+import 'package:echoprompter/core/script/text.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

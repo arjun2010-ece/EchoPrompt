@@ -26,7 +26,7 @@ detection is not ported (the app is English only).
 
 ## What was changed
 
-### Recogniser engine: `android/app/src/main/kotlin/com/echoprompt/app/SpeechChannel.kt`
+### Recogniser engine: `android/app/src/main/kotlin/com/echoprompter/app/SpeechChannel.kt`
 
 A line-by-line port of `ud` / `sd` / `qd`:
 
@@ -55,7 +55,7 @@ A line-by-line port of `ud` / `sd` / `qd`:
   logging listener, as the reference does). The system recogniser's own errors follow the `!J` branches: language errors
   and a missing microphone permission end the attempt with a message, other failures restart.
 
-### Shared audio in Voice mode: `packages/echoprompt_camera/.../SpeechAudioBridge.kt`, `EchopromptCameraPlugin.kt`
+### Shared audio in Voice mode: `packages/echoprompter_camera/.../SpeechAudioBridge.kt`, `EchoprompterCameraPlugin.kt`
 
 The reference feeds the recogniser from its own microphone capture whenever Voice tracking runs on Android 13+
 (`wd3.E` is true for voice tracking, `wd3.f` opens the capture `a34` with a pipe), not only while recording. We do the
@@ -170,9 +170,9 @@ results and tracker updates; "lag" is the time from the end of a phrase's audio 
 * The scroll after the highlight: ours eases toward the line with a 0.25 s time constant, the reference runs an 850 ms
   animation with an ease-out curve (`ht2`, interpolator 0, 0, 0.2, 1). Neither is slower than the other, so nothing was
   changed.
-* The one stall: the product name "EchoPrompt" in the first phrase. The recogniser writes "Echo prompt" (or "Echo Grant"
+* The one stall: the product name "EchoPrompter" in the first phrase. The recogniser writes "Echo prompter" (or "Echo Grant"
   at 230 wpm), which never equals the script word, so the highlight waited 1.0 to 1.2 s on "to" until "replace" arrived.
-  The reference does the same (its tokenizer also keeps "EchoPrompt" as one word), so it was left alone.
+  The reference does the same (its tokenizer also keeps "EchoPrompter" as one word), so it was left alone.
 * Not tested: speech from a real microphone on a real phone, the video file's audio track, API levels below 33.
 
 ### First-word speed (2026-10-23, after the owner's report)

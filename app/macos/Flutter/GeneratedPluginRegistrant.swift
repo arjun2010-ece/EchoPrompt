@@ -6,7 +6,7 @@ import FlutterMacOS
 import Foundation
 
 import audio_session
-import echoprompt_window
+import echoprompter_window
 import file_picker_darwin
 import just_audio
 import package_info_plus
@@ -20,7 +20,7 @@ import window_manager
 
 func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   AudioSessionPlugin.register(with: registry.registrar(forPlugin: "AudioSessionPlugin"))
-  EchopromptWindowPlugin.register(with: registry.registrar(forPlugin: "EchopromptWindowPlugin"))
+  EchoprompterWindowPlugin.register(with: registry.registrar(forPlugin: "EchoprompterWindowPlugin"))
   FilePickerPlugin.register(with: registry.registrar(forPlugin: "FilePickerPlugin"))
   JustAudioPlugin.register(with: registry.registrar(forPlugin: "JustAudioPlugin"))
   FPPPackageInfoPlusPlugin.register(with: registry.registrar(forPlugin: "FPPPackageInfoPlusPlugin"))

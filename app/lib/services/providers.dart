@@ -3,7 +3,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:echoprompt_window/echoprompt_window.dart';
+import 'package:echoprompter_window/echoprompter_window.dart';
 import 'package:flutter/services.dart' show MissingPluginException;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
@@ -17,17 +17,17 @@ import '../core/settings/prompt_settings.dart';
 import 'analytics/analytics_service.dart';
 import 'storage/script_library.dart';
 
-const settingsKey = 'EchoPrompt.settings.v2';
+const settingsKey = 'EchoPrompter.settings.v2';
 
 final prefsProvider = Provider<SharedPreferences>((_) => throw UnimplementedError());
 final libraryProvider = Provider<ScriptLibrary>((_) => throw UnimplementedError());
 final entitlementsProvider = Provider<Entitlements>((_) => const UnlockedEntitlements());
 final analyticsProvider = Provider((_) => AnalyticsService());
 
-/// `~/Documents/EchoPrompt Scripts` on desktop; app documents on mobile.
+/// `~/Documents/EchoPrompter Scripts` on desktop; app documents on mobile.
 Future<Directory> scriptsDirectory() async {
   final docs = await getApplicationDocumentsDirectory();
-  return Directory(p.join(docs.path, 'EchoPrompt Scripts'));
+  return Directory(p.join(docs.path, 'EchoPrompter Scripts'));
 }
 
 String jsonEncodeSettings(PromptSettings s) => jsonEncode(s.toJson());
@@ -96,7 +96,7 @@ class StudioState {
 
 class StudioNotifier extends Notifier<StudioState> {
   static const welcome =
-      'Welcome to EchoPrompt.\n\n'
+      'Welcome to EchoPrompter.\n\n'
       'Replace this text with your own script, or press Import to open a file. '
       'The preview on the right shows exactly how your words will look.\n\n'
       'When you are ready, press Start. The prompter floats above every other '
@@ -263,7 +263,7 @@ final readingWordProvider = NotifierProvider<ReadingWordNotifier, int>(ReadingWo
 
 /// Global shortcuts, persisted and layered over the platform defaults.
 class ShortcutsNotifier extends Notifier<Map<ShortcutAction, ShortcutBinding>> {
-  static const key = 'EchoPrompt.shortcuts.v1';
+  static const key = 'EchoPrompter.shortcuts.v1';
 
   @override
   Map<ShortcutAction, ShortcutBinding> build() =>
@@ -287,7 +287,7 @@ final shortcutsProvider =
 final hasNotchProvider = FutureProvider<bool>((_) async {
   if (!isMacOS) return false;
   try {
-    return await EchoPromptWindow.hasHardwareNotch;
+    return await EchoPrompterWindow.hasHardwareNotch;
   } on MissingPluginException {
     return false;
   }

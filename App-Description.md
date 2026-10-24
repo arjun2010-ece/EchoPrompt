@@ -1,4 +1,4 @@
-EchoPrompt is a modern, privacy-focused teleprompter with voice and hands-free auto-scroll controls. Built exclusively for macOS and iOS, it runs 100% on-device via Safari and native WebKit.
+EchoPrompter is a modern, privacy-focused teleprompter with voice and hands-free auto-scroll controls. Built exclusively for macOS and iOS, it runs 100% on-device via Safari and native WebKit.
 
 ✨ **Key Features**
 

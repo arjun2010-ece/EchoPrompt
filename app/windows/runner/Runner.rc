@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.echoprompt" "\0"
-            VALUE "FileDescription", "echoprompt" "\0"
+            VALUE "CompanyName", "com.echoprompter" "\0"
+            VALUE "FileDescription", "echoprompter" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "echoprompt" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.echoprompt. All rights reserved." "\0"
-            VALUE "OriginalFilename", "echoprompt.exe" "\0"
-            VALUE "ProductName", "echoprompt" "\0"
+            VALUE "InternalName", "echoprompter" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 com.echoprompter. All rights reserved." "\0"
+            VALUE "OriginalFilename", "echoprompter.exe" "\0"
+            VALUE "ProductName", "echoprompter" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

@@ -159,14 +159,14 @@ class ScriptListBody extends ConsumerWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
           child: Text(
-            'Showing your ${ScriptLibrary.maxEntries} most recent scripts. Older ones are kept in the EchoPrompt Scripts folder; use Import to open one.',
+            'Showing your ${ScriptLibrary.maxEntries} most recent scripts. Older ones are kept in the EchoPrompter Scripts folder; use Import to open one.',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
         ),
       if (history.isNotEmpty) const SizedBox(height: 8),
       _ScriptRow(
-        title: 'Welcome to EchoPrompt',
+        title: 'Welcome to EchoPrompter',
         meta: _words(wordCount(StudioNotifier.welcome)),
         icon: Icons.star_rounded,
         demo: true,

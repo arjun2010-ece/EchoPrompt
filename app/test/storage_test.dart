@@ -1,9 +1,9 @@
 import 'dart:io';
 
-import 'package:echoprompt/core/script/saved_script.dart';
-import 'package:echoprompt/core/settings/prompt_settings.dart';
-import 'package:echoprompt/services/storage/migration.dart';
-import 'package:echoprompt/services/storage/script_library.dart';
+import 'package:echoprompter/core/script/saved_script.dart';
+import 'package:echoprompter/core/settings/prompt_settings.dart';
+import 'package:echoprompter/services/storage/migration.dart';
+import 'package:echoprompter/services/storage/script_library.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -13,7 +13,7 @@ void main() {
   late ScriptLibrary lib;
 
   setUp(() async {
-    dir = Directory.systemTemp.createTempSync('echoprompt_test');
+    dir = Directory.systemTemp.createTempSync('echoprompter_test');
     SharedPreferences.setMockInitialValues({});
     prefs = await SharedPreferences.getInstance();
     lib = ScriptLibrary(dir, prefs);

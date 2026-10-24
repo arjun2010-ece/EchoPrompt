@@ -2,8 +2,8 @@
 import PackageDescription
 
 let package = Package(
-    name: "EchoPrompt",
+    name: "EchoPrompter",
     platforms: [.macOS(.v13)],
-    products: [.executable(name: "EchoPrompt", targets: ["TelePrompterApp"])],
+    products: [.executable(name: "EchoPrompter", targets: ["TelePrompterApp"])],
     targets: [.executableTarget(name: "TelePrompterApp")]
 )

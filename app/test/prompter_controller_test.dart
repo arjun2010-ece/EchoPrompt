@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:echoprompt/core/matching/audio_aligner.dart';
-import 'package:echoprompt/core/settings/prompt_settings.dart';
-import 'package:echoprompt/features/prompter/prompter_controller.dart';
-import 'package:echoprompt/services/audio/audio_input.dart';
-import 'package:echoprompt/services/speech/speech_engine.dart';
+import 'package:echoprompter/core/matching/audio_aligner.dart';
+import 'package:echoprompter/core/settings/prompt_settings.dart';
+import 'package:echoprompter/features/prompter/prompter_controller.dart';
+import 'package:echoprompter/services/audio/audio_input.dart';
+import 'package:echoprompter/services/speech/speech_engine.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 

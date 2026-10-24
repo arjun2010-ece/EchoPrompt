@@ -3,7 +3,7 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
-  echoprompt_window
+  echoprompter_window
   permission_handler_windows
   record_windows
   screen_retriever_windows

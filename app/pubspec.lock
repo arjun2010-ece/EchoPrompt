@@ -105,17 +105,17 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.8.0"
-  echoprompt_camera:
+  echoprompter_camera:
     dependency: "direct main"
     description:
-      path: "../packages/echoprompt_camera"
+      path: "../packages/echoprompter_camera"
       relative: true
     source: path
     version: "0.0.1"
-  echoprompt_window:
+  echoprompter_window:
     dependency: "direct main"
     description:
-      path: "../packages/echoprompt_window"
+      path: "../packages/echoprompter_window"
       relative: true
     source: path
     version: "0.0.1"

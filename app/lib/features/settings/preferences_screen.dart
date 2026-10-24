@@ -1,6 +1,6 @@
 
 import '../../services/platform.dart';
-import 'package:echoprompt_window/echoprompt_window.dart';
+import 'package:echoprompter_window/echoprompter_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -140,7 +140,7 @@ class _CaptureSupportNoteState extends State<_CaptureSupportNote> {
   @override
   void initState() {
     super.initState();
-    EchoPromptWindow.supportsCaptureHiding.then(
+    EchoPrompterWindow.supportsCaptureHiding.then(
       (v) => mounted ? setState(() => _supported = v) : null,
       onError: (_) {},
     );
@@ -180,7 +180,7 @@ class _CrashReportsSwitchState extends State<_CrashReportsSwitch> {
     contentPadding: EdgeInsets.zero,
     title: const Text('Send crash reports'),
     subtitle: Text(
-      'Helps fix crashes. Never includes your scripts. Applies the next time EchoPrompt starts.',
+      'Helps fix crashes. Never includes your scripts. Applies the next time EchoPrompter starts.',
       style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
     ),
     value: widget.prefs.getBool(crashReportingKey) ?? false,

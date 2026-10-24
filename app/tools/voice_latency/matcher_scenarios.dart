@@ -5,8 +5,8 @@
 // a re-read should jump back after about 5 words; garbled words, a 3-word repeat and a
 // 3-word re-read must not.
 import 'dart:io';
-import 'package:echoprompt/core/matching/voice_matcher.dart';
-import 'package:echoprompt/core/script/text.dart';
+import 'package:echoprompter/core/matching/voice_matcher.dart';
+import 'package:echoprompter/core/script/text.dart';
 
 void main(List<String> args) {
   final script = File(args[0]).readAsStringSync();

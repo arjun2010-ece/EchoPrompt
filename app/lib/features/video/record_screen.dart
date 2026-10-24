@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:echoprompt_camera/echoprompt_camera.dart';
+import 'package:echoprompter_camera/echoprompter_camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -54,9 +54,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
 
   // Overlay height as a fraction of the screen, remembered per orientation.
   double _fractionFor(bool landscape) =>
-      ref.read(prefsProvider).getDouble('EchoPrompt.overlay.${landscape ? 'l' : 'p'}') ?? (landscape ? 0.4 : 0.3);
+      ref.read(prefsProvider).getDouble('EchoPrompter.overlay.${landscape ? 'l' : 'p'}') ?? (landscape ? 0.4 : 0.3);
   void _saveFraction(bool landscape, double v) =>
-      ref.read(prefsProvider).setDouble('EchoPrompt.overlay.${landscape ? 'l' : 'p'}', v);
+      ref.read(prefsProvider).setDouble('EchoPrompter.overlay.${landscape ? 'l' : 'p'}', v);
   final _dragFractions = <bool, double>{};
   static const _barHeight = 56.0;
   static const _recordButtonSize = 45.0;
@@ -91,7 +91,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
 
   /// Mobile: Voice mode listens through a connected headset microphone; Audio mode through the built-in one.
   void _routeInput(PromptControlMode mode) {
-    if (isMobile) EchoPromptCamera.setHeadsetInput(mode != PromptControlMode.recordedAudio);
+    if (isMobile) EchoPrompterCamera.setHeadsetInput(mode != PromptControlMode.recordedAudio);
   }
 
   Future<void> _init() async {
@@ -118,8 +118,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
     // the microphone records it; other modes pace silently or into headphones.
     _route = ref.read(settingsProvider).mode == PromptControlMode.recordedAudio
         ? ReferenceRoute.speaker
-        : await EchoPromptCamera.headphonesConnected ? ReferenceRoute.headphones : ReferenceRoute.silent;
-    _events = EchoPromptCamera.events.listen((e) {
+        : await EchoPrompterCamera.headphonesConnected ? ReferenceRoute.headphones : ReferenceRoute.silent;
+    _events = EchoPrompterCamera.events.listen((e) {
       final type = e['type'];
       if (type == 'interrupted' || type == 'storage_full') _onStopped(null, '$type');
     });
@@ -141,10 +141,10 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
     if (_opening) return;
     _opening = true;
     try {
-      final p = await EchoPromptCamera.startPreview(_facing);
+      final p = await EchoPrompterCamera.startPreview(_facing);
       if (!mounted) {
         // Left the screen while the camera was opening: release it again.
-        EchoPromptCamera.stopPreview();
+        EchoPrompterCamera.stopPreview();
         return;
       }
       setState(() => _preview = p);
@@ -176,7 +176,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
       audioPath: ref.read(audioPathProvider),
       audible: _route != ReferenceRoute.silent,
       // One mic stream feeds the video file and the speech engine.
-      externalSamples: EchoPromptCamera.audioSamples,
+      externalSamples: EchoPrompterCamera.audioSamples,
     );
     if (!mounted || !_micIsIndependent || !(listen || wasListening)) return;
     if (!ref.read(prompterProvider).playing) await prompter.play();
@@ -189,9 +189,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
   Future<void> _flip() async {
     if (_recording) return;
     _facing = _facing == CameraFacing.front ? CameraFacing.back : CameraFacing.front;
-    final p = await EchoPromptCamera.switchCamera(_facing);
+    final p = await EchoPrompterCamera.switchCamera(_facing);
     if (!mounted) {
-      EchoPromptCamera.stopPreview();
+      EchoPrompterCamera.stopPreview();
       return;
     }
     setState(() => _preview = p);
@@ -208,7 +208,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
         prompter.pause();
       }
       if (_preview == null) return;
-      EchoPromptCamera.stopPreview();
+      EchoPrompterCamera.stopPreview();
       setState(() => _preview = null);
     } else if (state == AppLifecycleState.resumed) {
       if (_micWasOn) {
@@ -226,13 +226,13 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
     HapticFeedback.mediumImpact();
     final prompter = ref.read(prompterProvider.notifier);
     if (_paused) {
-      await EchoPromptCamera.resumeRecording();
+      await EchoPrompterCamera.resumeRecording();
       _startTimer();
       setState(() => _paused = false);
       if (!_micIsIndependent) await prompter.play();
     } else {
       _timer?.cancel();
-      await EchoPromptCamera.pauseRecording();
+      await EchoPrompterCamera.pauseRecording();
       setState(() => _paused = true);
       if (!_micIsIndependent) await prompter.pause();
     }
@@ -255,7 +255,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
     );
     if (choice == null || !_recording || !mounted) return;
     if (!_micIsIndependent) await ref.read(prompterProvider.notifier).pause();
-    final r = await EchoPromptCamera.stopRecording();
+    final r = await EchoPrompterCamera.stopRecording();
     if (choice == 'save') {
       await _onStopped(r, 'user');
       if (home && mounted) _home();
@@ -273,7 +273,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
     final analytics = ref.read(analyticsProvider);
     if (_recording) {
       if (!_micIsIndependent) await prompter.pause();
-      final r = await EchoPromptCamera.stopRecording();
+      final r = await EchoPrompterCamera.stopRecording();
       await _onStopped(r, 'user');
       return;
     }
@@ -290,8 +290,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
       landscape ? [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight] : [DeviceOrientation.portraitUp],
     );
     final mode = ref.read(settingsProvider).mode;
-    await EchoPromptCamera.setReferenceRoute(_route);
-    await EchoPromptCamera.startRecording(landscape: landscape);
+    await EchoPrompterCamera.setReferenceRoute(_route);
+    await EchoPrompterCamera.startRecording(landscape: landscape);
     analytics.log('video_record_start', {
       'orientation': landscape ? 'landscape' : 'portrait',
       'camera': _facing.name,
@@ -326,7 +326,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
     _recordings++;
     a.log('video_record_stop', {'duration_s': r.duration.inSeconds, 'reason': r.reason});
     try {
-      await EchoPromptCamera.saveToGallery(r.path);
+      await EchoPrompterCamera.saveToGallery(r.path);
       a.log('video_saved', {'duration_s': r.duration.inSeconds});
     } catch (_) {}
     if (!mounted) return;
@@ -339,7 +339,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
   @override
   void dispose() {
     // First, so nothing below can keep the camera open.
-    EchoPromptCamera.stopPreview();
+    EchoPrompterCamera.stopPreview();
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _events?.cancel();

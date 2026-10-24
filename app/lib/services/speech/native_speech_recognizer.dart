@@ -7,8 +7,8 @@ import 'speech_engine.dart';
 /// speaker talks. It reads our own microphone capture (the one a take records), except on Android below 13,
 /// where it opens the microphone itself. [isAvailable] is false when the phone has no recogniser at all.
 class NativeSpeechRecognizer {
-  static const _method = MethodChannel('com.echoprompt/speech');
-  static const _events = EventChannel('com.echoprompt/speech/events');
+  static const _method = MethodChannel('com.echoprompter/speech');
+  static const _events = EventChannel('com.echoprompter/speech/events');
 
   Future<bool> isAvailable() async => await _method.invokeMethod<bool>('isAvailable') ?? false;
 

@@ -15,7 +15,7 @@ import '../settings/preferences_screen.dart';
 import 'prompt_preview.dart';
 import 'script_list.dart';
 
-const _positionTipKey = 'EchoPrompt.positionTip.dismissed.v1';
+const _positionTipKey = 'EchoPrompter.positionTip.dismissed.v1';
 
 /// Script Studio on macOS and Windows: scripts on the left, the editor in the
 /// middle, and on the right a live preview with the few choices that matter
@@ -169,7 +169,7 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
       child: Scaffold(
         key: _scaffold,
         appBar: AppBar(
-          title: const Text('EchoPrompt'),
+          title: const Text('EchoPrompter'),
           // Nothing scrolls under this bar; ignore scroll notifications so the
           // script list relaying out on selection can't flash the header.
           notificationPredicate: (_) => false,
@@ -557,7 +557,7 @@ class _AudioChooser extends ConsumerWidget {
                 Text(
                   path == null
                       ? 'Pick the recording to follow.'
-                      : 'EchoPrompt transcribes it once, then follows along.',
+                      : 'EchoPrompter transcribes it once, then follows along.',
                   style: Theme.of(context).textTheme.bodySmall
                       ?.copyWith(color: scheme.onSurfaceVariant),
                 ),

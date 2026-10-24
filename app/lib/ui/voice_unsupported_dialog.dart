@@ -9,7 +9,7 @@ Future<void> showVoiceUnsupportedDialog(BuildContext context) => showDialog<void
     title: const Text('Voice mode isn\'t available on this phone'),
     content: const Text(
       'It needs the phone\'s speech recognition, and this phone doesn\'t offer it for English yet. '
-      'If it should, the phone may still be downloading the English speech files, or speech recognition may be turned off for EchoPrompt in Settings: try again in a few minutes.\n\n'
+      'If it should, the phone may still be downloading the English speech files, or speech recognition may be turned off for EchoPrompter in Settings: try again in a few minutes.\n\n'
       'Normal mode still scrolls at the pace you set.',
     ),
     actions: [FilledButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Got it'))],

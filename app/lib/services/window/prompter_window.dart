@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:ui';
 
-import 'package:echoprompt_window/echoprompt_window.dart';
+import 'package:echoprompter_window/echoprompter_window.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/settings/prompt_settings.dart';
@@ -12,7 +12,7 @@ class PrompterWindow {
   PrompterWindow(this._prefs);
   final SharedPreferences _prefs;
 
-  static const _framesKey = 'EchoPrompt.floatingFrames.v1';
+  static const _framesKey = 'EchoPrompter.floatingFrames.v1';
   String? _display;
 
   Map<String, List<double>> _frames() {
@@ -35,9 +35,9 @@ class PrompterWindow {
     );
   }
 
-  Future<void> enter(PromptSettings s) => EchoPromptWindow.enterPrompter(options(s));
-  Future<void> update(PromptSettings s) => EchoPromptWindow.update(options(s));
-  Future<void> exit() => EchoPromptWindow.exitPrompter();
+  Future<void> enter(PromptSettings s) => EchoPrompterWindow.enterPrompter(options(s));
+  Future<void> update(PromptSettings s) => EchoPrompterWindow.update(options(s));
+  Future<void> exit() => EchoPrompterWindow.exitPrompter();
 
   /// Persists a user-moved/resized floating frame. Corner snaps are returned
   /// so the caller can update the corner setting.

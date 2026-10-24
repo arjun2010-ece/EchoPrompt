@@ -13,7 +13,7 @@ Recorded-audio mode are unchanged and still use sherpa-onnx.
 |---|---|
 | Tracker (port of the reference matcher, `ju3`) | `lib/core/matching/script_tracker.dart` |
 | Dart wrapper for the platform recogniser | `lib/services/speech/android_speech_recognizer.dart` |
-| Native recogniser (Kotlin, `SpeechRecognizer`) | `android/app/src/main/kotlin/com/echoprompt/app/SpeechChannel.kt`, wired in `MainActivity.kt` |
+| Native recogniser (Kotlin, `SpeechRecognizer`) | `android/app/src/main/kotlin/com/echoprompter/app/SpeechChannel.kt`, wired in `MainActivity.kt` |
 | Voice-mode wiring | `lib/features/prompter/prompter_controller.dart` (`_startNativeVoice`, `_onHypothesis`) |
 | Package visibility for `RecognitionService` | `android/app/src/main/AndroidManifest.xml` (`<queries>`) |
 
