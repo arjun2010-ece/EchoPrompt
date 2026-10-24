@@ -89,7 +89,13 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
     animation.removeStatusListener(listener);
   }
 
+  /// Android: Voice mode listens through a connected headset microphone; Audio mode through the built-in one.
+  void _routeInput(PromptControlMode mode) {
+    if (isAndroid) EchoPromptCamera.setHeadsetInput(mode != PromptControlMode.recordedAudio);
+  }
+
   Future<void> _init() async {
+    _routeInput(ref.read(settingsProvider).mode);
     // Android Voice mode's start-up is light, so its script shows at once, on black, and the camera fades
     // in behind it once open (as in the reference). Audio mode transcribes its file on this thread, so it
     // starts once the preview is up (below).
@@ -351,6 +357,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
   @override
   Widget build(BuildContext context) {
     ref.listen(settingsProvider.select((s) => s.mode), (_, mode) {
+      _routeInput(mode);
       if (_recording) return;
       if (mode == PromptControlMode.recordedAudio) _route = ReferenceRoute.speaker;
       _beginPrompter(listen: true);
@@ -503,8 +510,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
               }),
               itemBuilder: (_) => [
                 CheckedPopupMenuItem(value: 'countdown', checked: _useCountdown, child: const Text('3-2-1 countdown')),
-                // Android Audio mode is followed through the microphone, so the audio always plays out loud.
-                if (!(isAndroid && ref.read(settingsProvider).mode == PromptControlMode.recordedAudio)) ...[
+                // Android has one way: Audio mode plays on the speaker so the microphone can follow it.
+                if (!isAndroid) ...[
                 const PopupMenuDivider(),
                 const PopupMenuItem(enabled: false, child: Text('Reference audio plays through')),
                 CheckedPopupMenuItem(value: 'headphones', checked: _route == ReferenceRoute.headphones, child: const Text('Headphones (not in the video)')),

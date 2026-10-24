@@ -127,13 +127,21 @@ class EchopromptCameraPlugin : FlutterPlugin, ActivityAware, MethodChannel.Metho
                 "stopRecording" -> result.success(finishRecording(call.argument<String>("reason") ?: "user"))
                 "saveToGallery" -> { saveToGallery(call.argument<String>("path")!!); result.success(null) }
                 "headphonesConnected" -> result.success(headphones())
-                "setReferenceRoute" -> result.success(null) // input is always the built-in mic
+                "setReferenceRoute" -> result.success(null) // reference audio always plays on the speaker
+                "setInputPreference" -> {
+                    preferHeadsetMic = call.argument<Boolean>("headset") ?: true
+                    audio?.route(context, preferHeadsetMic)
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         } catch (e: Exception) {
             result.error("camera", e.message, null)
         }
     }
+
+    /** Voice mode listens through a connected headset microphone; Audio mode must hear the speaker, so it uses the built-in one. */
+    @Volatile private var preferHeadsetMic = true
 
     private fun headphones(): Boolean {
         val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -271,7 +279,7 @@ class EchopromptCameraPlugin : FlutterPlugin, ActivityAware, MethodChannel.Metho
                     val out = downsampleTo16kFloat(pcm48k)
                     main.post { sink.success(out) }
                 }
-            }.also { it.start(context) }
+            }.also { it.start(context, preferHeadsetMic) }
         }
     }
 
@@ -440,23 +448,20 @@ private class Decimator {
     }
 }
 
-/** 48 kHz mono PCM16 from the built-in microphone. */
+/** 48 kHz mono PCM16 from a headset microphone when one is connected and wanted, else the built-in one. */
 private class AudioCapture(val onData: (ShortArray, Long) -> Unit) {
     private var record: AudioRecord? = null
     private var thread: Thread? = null
     @Volatile private var running = false
 
     @SuppressLint("MissingPermission")
-    fun start(context: Context) {
+    fun start(context: Context, preferHeadset: Boolean) {
         val rate = 48000
         val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         // The plain microphone source, as the reference's shared capture uses for recognition and the take.
         val r = AudioRecord(MediaRecorder.AudioSource.MIC, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, min * 2)
-        // Keep input on the built-in mic so Bluetooth output keeps A2DP quality.
-        val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        am.getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }
-            ?.let { r.setPreferredDevice(it) }
         record = r
+        route(context, preferHeadset)
         r.startRecording()
         running = true
         thread = Thread {
@@ -466,6 +471,26 @@ private class AudioCapture(val onData: (ShortArray, Long) -> Unit) {
                 if (n > 0) onData(buf.copyOf(n - n % 3), SystemClock.elapsedRealtimeNanos() / 1000)
             }
         }.also { it.start() }
+    }
+
+    /**
+     * Picks the input as the reference's shared capture does: a USB headset, USB device, wired headset or
+     * Bluetooth SCO microphone, in that order, otherwise the built-in microphone.
+     */
+    fun route(context: Context, preferHeadset: Boolean) {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val inputs = am.getDevices(AudioManager.GET_DEVICES_INPUTS).filter { it.isSource }
+        val headset = if (preferHeadset) {
+            HEADSET_ORDER.firstNotNullOfOrNull { type -> inputs.firstOrNull { it.type == type } }
+        } else null
+        (headset ?: inputs.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC })?.let { record?.setPreferredDevice(it) }
+    }
+
+    private companion object {
+        val HEADSET_ORDER = listOf(
+            AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_DEVICE,
+            AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+        )
     }
 
     fun stop() {

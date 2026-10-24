@@ -125,6 +125,11 @@ class EchoPromptCamera {
   static Future<bool> get headphonesConnected async =>
       (await _channel.invokeMethod<bool>('headphonesConnected')) ?? false;
 
+  /// Android: whether the microphone may be a connected headset (USB, wired or Bluetooth SCO) instead of
+  /// the built-in one. Voice mode wants the headset; Audio mode must hear the speaker, so it does not.
+  static Future<void> setHeadsetInput(bool headset) =>
+      _channel.invokeMethod('setInputPreference', {'headset': headset});
+
   /// Routes reference-audio playback for a take. Keeps the input on the
   /// built-in microphone so Bluetooth output keeps full quality.
   static Future<void> setReferenceRoute(ReferenceRoute route) =>
