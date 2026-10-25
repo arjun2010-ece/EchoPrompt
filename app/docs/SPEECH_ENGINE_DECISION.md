@@ -1,9 +1,9 @@
 # Voice mode: which speech engine?
 
-Status: **open decision**, written October 2026. Nothing in this file is implemented. The
-sherpa fixes already made are in `VOICE_LATENCY.md`; read that first for the measured numbers
-and the harness. This file records the question that came after: is a better recognizer
-available to us, and what should we do about it?
+Status: **resolved**, written October 2026. sherpa-onnx has been removed from every platform; Voice and Audio
+mode now use each platform's own recogniser (Android `SpeechRecognizer`, Apple `SFSpeechRecognizer` on iOS, iPadOS
+and macOS, Windows `Windows.Media.SpeechRecognition`). This file is kept as the research that led there; the
+sherpa harness and its measurements it refers to were deleted with the engine.
 
 ## Why this came up
 

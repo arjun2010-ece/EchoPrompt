@@ -168,13 +168,11 @@ class _RecordScreenState extends ConsumerState<RecordScreen> with WidgetsBinding
     final s = ref.read(settingsProvider);
     final prompter = ref.read(prompterProvider.notifier);
     final wasListening = ref.read(prompterProvider).playing;
-    if (s.mode == PromptControlMode.voice) prompter.warmUpVoice();
     await prompter.begin(
       sessionId: studio.sessionId,
       script: studio.script,
       mode: s.mode,
       audioPath: ref.read(audioPathProvider),
-      audible: _route != ReferenceRoute.silent,
       // One mic stream feeds the video file and the speech engine.
       externalSamples: EchoPrompterCamera.audioSamples,
     );

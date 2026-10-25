@@ -1,7 +1,5 @@
 import 'package:flutter/services.dart';
 
-import 'speech_engine.dart';
-
 /// The platform speech recogniser: Android's `SpeechRecognizer` or Apple's `SFSpeechRecognizer` (iOS, iPadOS,
 /// macOS), on-device where the device has it and otherwise the system one (which may use the network), reporting partial results as the
 /// speaker talks. It reads our own microphone capture (the one a take records), except on Android below 13,
@@ -37,4 +35,20 @@ class NativeSpeechRecognizer {
 /// The phone has no recogniser Voice mode can use for English; the reader is told so.
 class NativeRecognizerUnavailable extends SpeechUnavailable {
   NativeRecognizerUnavailable(super.message);
+}
+
+/// The recogniser's running text for the current utterance. [isFinal] ends the
+/// utterance (a result, or the recogniser restarting without one).
+class SpeechHypothesis {
+  const SpeechHypothesis(this.text, {required this.isFinal});
+  final String text;
+  final bool isFinal;
+}
+
+/// Speech recognition can't run; [message] tells the reader why.
+class SpeechUnavailable implements Exception {
+  SpeechUnavailable(this.message);
+  final String message;
+  @override
+  String toString() => message;
 }

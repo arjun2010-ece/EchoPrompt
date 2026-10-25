@@ -46,6 +46,3 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
-# models are fetched by tools/fetch_models.sh, never committed
-/assets/models/en/*/*
-!/assets/models/en/*/.gitkeep

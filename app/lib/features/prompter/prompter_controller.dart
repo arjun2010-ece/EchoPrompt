@@ -4,28 +4,18 @@ import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/matching/audio_aligner.dart';
 import '../../core/matching/script_tracker.dart';
-import '../../core/matching/voice_matcher.dart';
 import '../../core/progress/reading_progress.dart';
 import '../../core/script/text.dart';
 import '../../core/settings/prompt_settings.dart';
 import '../../services/audio/audio_input.dart';
 import '../../services/audio/reference_clock.dart';
 import '../../services/speech/native_speech_recognizer.dart';
-import '../../services/speech/sherpa_speech_engine.dart';
-import '../../services/speech/speech_engine.dart';
 
-final speechEngineProvider = Provider<SpeechEngine>((ref) {
-  final e = SherpaSpeechEngine();
-  ref.onDispose(e.dispose);
-  return e;
-});
-
-/// Voice and Audio mode's recogniser on Android, iOS and macOS; null on Windows, which still runs on
-/// [speechEngineProvider]. Where it exists the sherpa engine is never used: a device without a recogniser is told so.
+/// Voice and Audio mode's recogniser: the platform's own (Android, iOS, macOS, Windows); null elsewhere.
+/// A device without one is told so.
 final nativeSpeechProvider = Provider<NativeSpeechRecognizer?>(
-  (_) => Platform.isAndroid || Platform.isIOS || Platform.isMacOS ? NativeSpeechRecognizer() : null,
+  (_) => Platform.isAndroid || Platform.isIOS || Platform.isMacOS || Platform.isWindows ? NativeSpeechRecognizer() : null,
 );
 final audioInputProvider = Provider<AudioInput>((_) => RecordAudioInput());
 
@@ -98,19 +88,14 @@ class PrompterState {
 class PrompterController extends Notifier<PrompterState> {
   late final AudioInput _input;
   int _session = -1;
-  String _script = '';
   PromptControlMode _mode = PromptControlMode.normal;
-  VoiceMatcher? _matcher;
   ScriptTracker? _tracker;
   StreamSubscription<Object?>? _voiceSub;
   bool _nativeVoice = false;
   final _trackerClock = Stopwatch()..start();
-  Timer? _clockTimer;
   Timer? _lostTimer;
   static const _lostAfter = Duration(seconds: 4);
   ReferenceClock? _clock;
-  List<TimedWord> _timed = const [];
-  double _audioDuration = 0;
   int _wordCount = 0;
 
   @override
@@ -127,44 +112,21 @@ class PrompterController extends Notifier<PrompterState> {
     required String script,
     required PromptControlMode mode,
     String? audioPath,
-    bool audible = true,
     Stream<Float32List>? externalSamples,
   }) async {
     if (sessionId == _session && mode == _mode) return;
     await _teardown();
     _session = sessionId;
-    _script = script;
     _mode = mode;
     _wordCount = scriptWords(script).length;
-    _matcher = VoiceMatcher(script);
     _tracker = ScriptTracker(scriptWords(script));
     state = PrompterState(resetToken: state.resetToken + 1);
     _externalSamples = externalSamples;
-    // Audio mode on mobile follows the file by listening to it, so it must be heard.
-    _audible = audible || (_nativeAudio);
     _audioPath = audioPath;
     if (mode == PromptControlMode.recordedAudio) await _prepareAudio();
   }
 
-  /// Loads the speech model before Voice mode's Start, so Start doesn't spend its first
-  /// seconds (and the first spoken words) on it. Loading blocks the UI thread briefly, so
-  /// call it once the screen is on display, not while its route is still animating in.
-  /// The platform recogniser needs none: like the reference, it is created at Start.
-  void warmUpVoice() {
-    if (ref.read(nativeSpeechProvider) == null) _warmUpSherpa();
-  }
-
-  void _warmUpSherpa() {
-    final engine = ref.read(speechEngineProvider);
-    if (engine is SherpaSpeechEngine) unawaited(engine.warmUp().catchError((Object _) {}));
-  }
-
-  /// Mobile Audio mode: the file plays out loud and the recogniser follows it through the microphone,
-  /// exactly as it follows a reader in Voice mode (no transcription of the file).
-  bool get _nativeAudio => _mode == PromptControlMode.recordedAudio && ref.read(nativeSpeechProvider) != null;
-
   Stream<Float32List>? _externalSamples;
-  bool _audible = true;
   String? _audioPath;
 
   Future<void> togglePlay() => state.playing ? pause() : play();
@@ -177,20 +139,12 @@ class PrompterController extends Notifier<PrompterState> {
         await _startVoice();
       case PromptControlMode.recordedAudio:
         final clock = _clock;
-        if (_nativeAudio) {
-          if (clock == null) return;
-          // Listening first, so the recogniser is up as the audio starts; if it can't, nothing plays.
-          await _startVoice();
-          if (!state.playing) return;
-          state = state.copyWith(finished: false);
-          unawaited(clock.play());
-          return;
-        }
-        if (clock == null || _timed.isEmpty) return;
-        // just_audio's play() future only completes on pause/end, so don't await it
-        // before publishing the playing state.
-        _clockTimer ??= Timer.periodic(const Duration(milliseconds: 33), (_) => _tickClock());
-        state = state.copyWith(playing: true, finished: false, status: 'Playing');
+        if (clock == null) return;
+        // Listening first, so the recogniser is up as the audio starts; if it can't, nothing plays.
+        await _startVoice();
+        if (!state.playing) return;
+        state = state.copyWith(finished: false);
+        // just_audio's play() future only completes on pause/end, so don't await it.
         unawaited(clock.play());
     }
   }
@@ -203,9 +157,7 @@ class PrompterController extends Notifier<PrompterState> {
         await _stopVoice();
       case PromptControlMode.recordedAudio:
         await _clock?.pause();
-        _clockTimer?.cancel();
-        _clockTimer = null;
-        await _stopVoice(); // Audio mode listens on mobile; elsewhere this does nothing
+        await _stopVoice();
     }
     _clearLost();
     state = state.copyWith(playing: false, lost: false);
@@ -238,32 +190,10 @@ class PrompterController extends Notifier<PrompterState> {
 
   Future<void> _startVoice() async {
     final native = ref.read(nativeSpeechProvider);
-    if (native != null) {
-      // Mobile has no other recogniser: a device without on-device speech recognition is told so.
-      state = state.copyWith(voiceUnsupported: false);
-      if (await _safeAvailable(native)) return _startNativeVoice(native);
-      return _voiceUnsupported('Speech recognition is not available on this device');
-    }
-    final engine = ref.read(speechEngineProvider);
-    try {
-      await engine.init();
-      Stream<Float32List> samples;
-      if (_externalSamples != null) {
-        samples = _externalSamples!;
-      } else {
-        final input = _input;
-        if (!await input.hasPermission()) {
-          state = state.copyWith(status: 'Microphone access is needed for Voice control');
-          return;
-        }
-        samples = input.start();
-      }
-      state = state.copyWith(playing: true, status: 'Listening');
-      void failed(Object e) => state = state.copyWith(playing: false, status: '$e');
-      _voiceSub = engine.listen(samples).listen(_onWords, onError: failed);
-    } on SpeechUnavailable catch (e) {
-      state = state.copyWith(playing: false, status: e.message);
-    }
+    state = state.copyWith(voiceUnsupported: false);
+    // There is no other recogniser: a device without speech recognition is told so.
+    if (native != null && await _safeAvailable(native)) return _startNativeVoice(native);
+    return _voiceUnsupported('Speech recognition is not available on this device');
   }
 
   void _voiceUnsupported(String message) =>
@@ -317,34 +247,8 @@ class PrompterController extends Notifier<PrompterState> {
     final sub = _voiceSub;
     if (sub == null) return;
     _voiceSub = null;
-    if (_nativeVoice) {
-      _nativeVoice = false;
-      await sub.cancel(); // stops the recogniser, which owns its microphone
-      return;
-    }
-    // The recognizer's generator only finishes cancelling once the sample
-    // stream ends, so don't await it before closing the microphone.
-    unawaited(sub.cancel());
-    if (_externalSamples == null) await _input.stop();
-  }
-
-  void _onWords(List<String> words) {
-    final current = state.progress.confirmedWordIndex;
-    final next = _matcher!.follow(words, current);
-    if (next == current) {
-      // Speech that keeps not matching means the reader is out of step.
-      if (words.isNotEmpty && !state.lost) _lostTimer ??= Timer(_lostAfter, () => state = state.copyWith(lost: true));
-      return;
-    }
-    _clearLost();
-    state = state.copyWith(
-      progress: PromptReadingProgress.synchronized(
-        confirmed: next,
-        predicted: next + 1 < _wordCount ? next + 1 : null,
-      ),
-      lost: false,
-      finished: next >= _wordCount - 1,
-    );
+    _nativeVoice = false;
+    await sub.cancel(); // stops the recogniser, which owns its microphone
   }
 
   /// Every recogniser result goes to the tracker, as the reference does (`ud.q`); blank ones carry nothing.
@@ -384,46 +288,14 @@ class PrompterController extends Notifier<PrompterState> {
 
   // --- Recorded audio --------------------------------------------------------
 
+  /// Only loads the file to play it; following it is the recogniser's job at Play: it listens to the
+  /// file through the microphone exactly as it listens to a reader in Voice mode.
   Future<void> _prepareAudio() async {
     final path = _audioPath;
     if (path == null) {
       state = state.copyWith(status: 'Choose an audio file');
       return;
     }
-    if (_nativeAudio) return _prepareNativeAudio(path);
-    state = state.copyWith(preparing: true, status: 'Synchronizing audio…');
-    try {
-      final engine = ref.read(speechEngineProvider);
-      await engine.init();
-      final clock = ref.read(referenceClockFactoryProvider)(audible: _audible);
-      _audioDuration = await clock.load(path);
-      final segments = await engine.transcribeFile(path);
-      final timed = alignTranscript(
-        tokens: tokensFromSegments(segments),
-        segments: segments,
-        script: _script,
-        audioDuration: _audioDuration,
-      );
-      _clock = clock;
-      clock.completed.listen((_) async {
-        _clockTimer?.cancel();
-        _clockTimer = null;
-        state = state.copyWith(playing: false, finished: true, status: 'Finished');
-      });
-      _timed = timed;
-      state = state.copyWith(
-        preparing: false,
-        status: timed.isEmpty ? 'Could not match audio to this script' : 'Ready — press Play',
-      );
-    } on SpeechUnavailable catch (e) {
-      state = state.copyWith(preparing: false, status: e.message);
-    } catch (_) {
-      state = state.copyWith(preparing: false, status: 'Could not synchronize this audio file');
-    }
-  }
-
-  /// Mobile: only loads the file to play it; following it is the recogniser's job at Play.
-  Future<void> _prepareNativeAudio(String path) async {
     state = state.copyWith(preparing: true, status: 'Loading audio…');
     try {
       final clock = ref.read(referenceClockFactoryProvider)(audible: true);
@@ -442,29 +314,11 @@ class PrompterController extends Notifier<PrompterState> {
     }
   }
 
-  void _tickClock() {
-    final clock = _clock;
-    if (clock == null) return;
-    final elapsed = clock.position.inMilliseconds / 1000.0;
-    final ceiling = pacingCeiling(
-      elapsed: elapsed,
-      audioDuration: _audioDuration,
-      scriptWordCount: _wordCount,
-    );
-    final word = currentWordAt(timed: _timed, elapsed: elapsed, ceiling: ceiling);
-    if (word != null && word > state.progress.confirmedWordIndex) {
-      state = state.copyWith(progress: PromptReadingProgress.synchronized(confirmed: word));
-    }
-  }
-
   Future<void> _teardown() async {
     _clearLost();
-    _clockTimer?.cancel();
-    _clockTimer = null;
     await _stopVoice();
     await _clock?.dispose();
     _clock = null;
-    _timed = const [];
   }
 }
 

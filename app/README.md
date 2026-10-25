@@ -3,7 +3,6 @@
 Cross-platform EchoPrompter: macOS, Windows, iOS, iPadOS, Android. See `../plan/cross-platform-plan.md`.
 
 ```sh
-./tools/fetch_models.sh        # one-time: English speech models (not in git)
 flutter pub get
 flutter test
 flutter run -d macos           # or windows / an iOS or Android device

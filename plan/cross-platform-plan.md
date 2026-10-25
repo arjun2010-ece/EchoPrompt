@@ -43,7 +43,7 @@ It must be ready for a paid release, with the paywall built in Stage 2.
 | Framework | **Flutter** (Dart, AOT-compiled to native machine code, Impeller rendering) |
 | Shared code | About 85–90%: UI, state, script storage, the word-matching engine, playback, paywall logic |
 | Native code | Small plugins: `echoprompter_window` (macOS Swift, Windows C++) for the overlay window, notch, click-through, and hide-from-capture; `echoprompter_camera` (iOS Swift, Android Kotlin) for video recording |
-| Speech recognition | **sherpa-onnx** streaming ASR. It runs on-device and offline, behaves the same on every platform, and is Apache-2.0. **English only at launch**; more languages ship as downloadable models later. |
+| Speech recognition | Each platform's own recogniser: Android `SpeechRecognizer`, Apple `SFSpeechRecognizer` (iOS, iPadOS, macOS), Windows `Windows.Media.SpeechRecognition`. On-device where the platform has it. **English only at launch.** |
 | State management | Riverpod |
 | Accounts | **Optional EchoPrompter account** (Sign in with Apple / Google / email link). It is needed only to share Pro across devices. |
 | Paywall (Stage 2) | 5 free scripts → **Monthly subscription (highlighted default)** or **Lifetime**. One purchase unlocks all of the user's devices. Subscriptions are re-verified at least every 30 days, and **30 days offline at most**, after which the paywall shows (§10.4). |
@@ -179,20 +179,15 @@ The POC uses Apple's `SFSpeechRecognizer`. The other platforms have no equivalen
 - Windows `Windows.Media.SpeechRecognition` has weaker quality and inconsistent word timing.
 - Android `SpeechRecognizer` is on-device only on some devices, has session time limits, and gives no word timestamps.
 
-**Plan: bundle one on-device engine on every platform → identical behaviour.**
+**Plan (current): each platform uses its own recogniser behind one `NativeSpeechRecognizer` channel.**
 
-- **Engine:** [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0, actively maintained, has a Flutter/Dart package, and supports all our targets).
-  - **Voice mode:** a streaming transducer model (English, int8, about 20–70 MB) gives partial results as words are spoken, with low latency.
-  - **Recorded audio:** a non-streaming/offline model with **token timestamps**, which replaces `SFSpeechURLRecognitionRequest`.
-- **Abstraction:** a `SpeechEngine` interface (`Stream<RecognizedWords> listen()`, `Future<List<TimedToken>> transcribeFile(path)`). Implementations:
-  - `SherpaSpeechEngine` (default, all platforms)
-  - `AppleSpeechEngine` (optional, macOS/iOS: `SFSpeechRecognizer` or `SpeechAnalyzer` on OS 26+) used **only if** benchmarks show it is clearly better
+- **Engines:** Android `SpeechRecognizer`; Apple `SFSpeechRecognizer` (iOS, iPadOS, macOS); Windows `Windows.Media.SpeechRecognition`. All feed the same `ScriptTracker` with the running hypothesis.
+  - **Voice mode:** partial results as words are spoken.
+  - **Recorded audio:** the audio file plays out loud and the same recogniser follows it through the microphone; the file is not transcribed.
+- **Abstraction:** `NativeSpeechRecognizer` (`isAvailable()`, `setBias()`, `hypotheses()`), implemented natively per platform.
 - **Languages:** **English only at launch.** The English model is bundled so the app works offline on first launch. Later languages are optional in-app downloads, one model per language. They are selected in Settings, and the language is stored per script.
   - The tokenizer and `normalize()` are built language-aware from day one: Unicode-aware, with no ASCII-only assumptions. Adding a language then means adding a model, not rewriting the matcher.
-- **Mic capture:** `record` package or a small native capture (16 kHz mono PCM) feeding sherpa. Normal mode **must never open the microphone**. This is enforced in the `AudioInput` service with a unit test.
-- **Benchmark gate (Phase 0):** compare sherpa against Apple on 10 recorded scripts (word error rate, latency, CPU, RAM). Targets: WER ≤ Apple + 3 points, partial-result latency ≤ 300 ms.
-
-Licence check: the model weights must also allow commercial use. Several sherpa zipformer models are Apache-2.0. Each one we ship is recorded in `THIRD_PARTY_NOTICES`.
+- **Mic capture:** the native recogniser (or the camera plugin's shared capture on mobile) opens the microphone; the `record` package is only used to ask for permission. Normal mode **must never open the microphone**. This is enforced in the `AudioInput` service with a unit test.
 
 ---
 
@@ -213,7 +208,7 @@ TelePrompterApp/
 │   │   │   ├── entitlements/    # paywall state machine (pure Dart, injectable clock) (§10.4)
 │   │   │   └── settings/        # typed settings + persistence keys
 │   │   ├── services/            # interfaces + impls
-│   │   │   ├── speech/          # SpeechEngine, SherpaSpeechEngine, AppleSpeechEngine
+│   │   │   ├── speech/          # NativeSpeechRecognizer (platform channel)
 │   │   │   ├── audio/           # AudioInput (mic), AudioPlayback (file)
 │   │   │   ├── storage/         # ScriptLibrary (.txt files + JSON index), POC migration
 │   │   │   ├── window/          # PrompterWindow facade over echoprompter_window (desktop)
@@ -254,7 +249,7 @@ TelePrompterApp/
 | State | `flutter_riverpod` |
 | Mic PCM capture | `record` (stream mode) |
 | Audio file playback with precise position | `just_audio` (+ `just_audio_media_kit` on Windows) |
-| Speech | `sherpa_onnx` |
+| Speech | platform recognisers via our own channel (no package) |
 | File picker | `file_picker` |
 | Paths / settings | `path_provider`, `shared_preferences` |
 | Permissions (mobile) | `permission_handler` |
@@ -430,7 +425,7 @@ Everything is listed in §9.5. The product and code don't change, because store 
 
 Android Voice mode now follows the reference app: it uses the phone's on-device `SpeechRecognizer` and falls back to the system recogniser, which may use the network (`app/docs/android-voice-reference-parity.md`). A phone with neither only gets an alert saying Voice mode isn't available yet.
 
-Later, add an offline fallback engine for those phones. The candidate is **Vosk**, which the reference app also offers. It feeds the same `ScriptTracker` as the platform recogniser. The sherpa-onnx path is not used for Android Voice mode any more.
+Later, add an offline fallback engine for those phones. The candidate is **Vosk**, which the reference app also offers. It feeds the same `ScriptTracker` as the platform recogniser. sherpa-onnx has been removed from every platform.
 
 ---
 
@@ -493,7 +488,7 @@ The full design is in §10.4. Store rules that shape it:
 
 ### 9.4 Launch checklist (v1, minimal; these are store requirements, not optional)
 - [ ] Replace the current **"Personal Use"** `LICENSE`, add `TERMS.md`, and make the app source private (§10.3).
-- [ ] `THIRD_PARTY_NOTICES` for Flutter (BSD), packages, sherpa-onnx, and model weights. Verify each model's licence allows commercial use.
+- [ ] `THIRD_PARTY_NOTICES` for Flutter (BSD) and packages.
 - [ ] **Privacy policy**, required by every store. It must state on-device speech processing and no script upload, and disclose:
   - Google Analytics;
   - the optional account (email);
@@ -819,7 +814,7 @@ A local counter alone resets on reinstall. Two layers fix that:
 | Flutter can't reproduce the macOS notch/top-level panel behaviour (direct or sandboxed) | High | Phase 0 spike 1 is a hard gate. The native plugin has full NSWindow access through `MainFlutterWindow`. |
 | Mac App Store review questions the capture-hiding or above-menu-bar window | Medium | Both use public APIs. Describe the feature clearly in review notes. If needed, ship the MAS flavour with the feature off and keep it in the direct build. |
 | Capture-hiding changes in a future OS (e.g. ScreenCaptureKit behaviour) | Medium | Best-effort wording, the verification matrix in each release checklist, and per-OS feature flags |
-| sherpa-onnx accuracy below Apple's on Mac/iOS | Medium | `SpeechEngine` interface. Use Apple's engine on Apple platforms if it wins the benchmark. |
+| Platform recognisers differ in accuracy, latency and network use between platforms | Medium | One `ScriptTracker` and one channel contract for all of them; per-platform fixes stay in the native plugin. |
 | Camera recording and speech recognition fight over the mic, or video and audio drift out of sync | High | Our own `echoprompter_camera` with one shared audio stream. Phase 0 spike 5 is a gate, and there is a remux fallback on Android. |
 | Thermal throttling (recording + recognition + rendering) on older phones | Medium | Default 1080p30, thermal-state monitoring that lowers resolution or warns, and a 10-minute soak test in QA |
 | Audio mode while recording: reference playback leaks into the video, or the Bluetooth mic switch lowers quality | Medium | Headphones / silent pacing / explicit speaker option, with input pinned to the built-in mic (§10.2). Phase 0 spike 5 is the gate. |

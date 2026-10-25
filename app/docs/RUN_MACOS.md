@@ -35,17 +35,11 @@ open build/macos/Build/Products/Debug/EchoPrompter.app
 Drag `EchoPrompter.app` to `/Applications` if you want to keep it. The release
 build (`--release`) is the one to use for real presentations; it is faster.
 
-## Speech models (only for Voice and Audio modes)
+## Speech recognition (only for Voice and Audio modes)
 
-The models are not stored in git. Download them once:
-
-```sh
-cd app
-./tools/fetch_models.sh
-```
-
-This fills `app/assets/models/en/online` and `app/assets/models/en/offline`.
-Rebuild the app afterwards, because the models are bundled at build time.
+Voice and Audio mode use the platform's own speech recogniser, so there is nothing to download. Turn on
+Dictation in System Settings > Keyboard, then start the app with `open EchoPrompter.app` (not `flutter run`) so
+macOS can show the speech and microphone prompts.
 
 ## Permissions
 

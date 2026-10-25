@@ -49,7 +49,6 @@ dependencies:
   permission_handler: 12.0.3
   window_manager: ^0.5.2
   sentry_flutter: ^10.1.0
-  sherpa_onnx: ^1.13.8
   share_plus: ^13.3.1
 
 dev_dependencies:
@@ -68,10 +67,6 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
 flutter:
-  assets:
-    - assets/models/en/online/
-    - assets/models/en/offline/
-
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.
