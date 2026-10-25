@@ -147,8 +147,8 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
     ref.read(studioProvider.notifier).start();
   }
 
-  /// Voice and Audio mode need something only the reader can allow or turn on (Online speech recognition on
-  /// Windows; speech or microphone access and Dictation on macOS). Offers the Settings page first; "Start
+  /// Voice and Audio mode need something only the reader can allow or turn on (speech or microphone access
+  /// and Dictation on macOS). Offers the Settings page first; "Start
   /// anyway" goes on regardless, since a setting can't always be read.
   Future<bool> _speechSettingReady() async {
     if (ref.read(settingsProvider).mode == PromptControlMode.normal) return true;

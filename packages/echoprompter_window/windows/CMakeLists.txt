@@ -37,9 +37,6 @@ add_library(${PLUGIN_NAME} SHARED
 # full control over build settings.
 apply_standard_settings(${PLUGIN_NAME})
 
-# The speech recogniser is C++/WinRT, whose headers are not clean under the standard /W4 /WX settings.
-set_source_files_properties("speech_recognizer_channel.cpp" PROPERTIES COMPILE_OPTIONS "/WX-")
-
 # Symbols are hidden by default to reduce the chance of accidental conflicts
 # between plugins. This should not be removed; any symbols that should be
 # exported should be explicitly exported with the FLUTTER_PLUGIN_EXPORT macro.
@@ -51,7 +48,7 @@ target_compile_definitions(${PLUGIN_NAME} PRIVATE FLUTTER_PLUGIN_IMPL)
 # dependencies here.
 target_include_directories(${PLUGIN_NAME} INTERFACE
   "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(${PLUGIN_NAME} PRIVATE flutter flutter_wrapper_plugin shell32 user32 windowsapp)
+target_link_libraries(${PLUGIN_NAME} PRIVATE flutter flutter_wrapper_plugin shell32 user32 ole32 sapi)
 
 # List of absolute paths to libraries that should be bundled with the plugin.
 # This list could contain prebuilt libraries, or libraries created by an

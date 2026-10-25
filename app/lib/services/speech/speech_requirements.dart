@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'native_speech_recognizer.dart';
-import 'windows_speech_privacy.dart';
 
 /// Something the reader has to allow or turn on before Voice and Audio mode can work, and how to get there.
 class SpeechRequirement {
@@ -14,15 +13,7 @@ class SpeechRequirement {
 /// The first unmet requirement for Voice and Audio mode on this desktop, or null if there is none (or it can't
 /// be told, in which case the recogniser reports any real problem itself).
 Future<SpeechRequirement?> unmetSpeechRequirement() async {
-  if (Platform.isWindows) {
-    if (await onlineSpeechRecognitionOn()) return null;
-    return const SpeechRequirement(
-      title: 'Turn on Online speech recognition',
-      message: 'Voice and Audio mode use Windows speech recognition, which needs Online speech recognition turned '
-          'on in Settings > Privacy & security > Speech. Your speech is sent to Microsoft to be recognised.',
-      openSettings: openOnlineSpeechSettings,
-    );
-  }
+  // Windows needs nothing: its on-device recogniser works without any Settings switch.
   if (Platform.isMacOS) {
     try {
       final r = await NativeSpeechRecognizer().readiness();

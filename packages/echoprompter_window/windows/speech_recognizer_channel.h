@@ -7,14 +7,14 @@
 
 namespace echoprompter_window {
 
-// Voice and Audio mode's recogniser on Windows: `Windows.Media.SpeechRecognition` in continuous dictation,
-// streaming partial hypotheses to Dart while the event stream is listened to. It is the counterpart of the
-// Android, iOS and macOS recognisers, so Dart treats all of them the same: every hypothesis goes to the script
-// tracker, and an empty final marks the start of a session and each phrase's end.
+// Voice and Audio mode's recogniser on Windows: the on-device SAPI dictation recogniser, streaming partial
+// hypotheses to Dart while the event stream is listened to. It is the counterpart of the Android, iOS and
+// macOS recognisers, so Dart treats all of them the same: every hypothesis goes to the script tracker, and an
+// empty final marks the start of a session and each phrase's end.
 //
-// The recogniser listens to the system's default input, which Windows points at a headset when one is
-// connected. The WinRT API cannot choose another device. Everything here runs on the platform thread; the
-// WinRT callbacks only queue work for it.
+// It needs no internet connection or Settings switch, and listens to the system's default input, which
+// Windows points at a headset when one is connected. SAPI posts a window message when it has events, so
+// everything here runs on the platform thread.
 class SpeechRecognizerChannel {
  public:
   explicit SpeechRecognizerChannel(flutter::PluginRegistrarWindows *registrar);
@@ -24,7 +24,7 @@ class SpeechRecognizerChannel {
   SpeechRecognizerChannel &operator=(const SpeechRecognizerChannel &) = delete;
 
  private:
-  class Impl;  // keeps the WinRT headers out of the plugin's other sources
+  class Impl;  // keeps the SAPI headers out of the plugin's other sources
   std::unique_ptr<Impl> impl_;
 };
 
