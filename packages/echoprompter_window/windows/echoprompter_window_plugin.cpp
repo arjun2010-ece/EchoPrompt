@@ -1,5 +1,7 @@
 #include "echoprompter_window_plugin.h"
 
+#include "speech_recognizer_channel.h"
+
 #include <flutter/standard_method_codec.h>
 
 #include <algorithm>
@@ -119,6 +121,7 @@ EchoprompterWindowPlugin::EchoprompterWindowPlugin(flutter::PluginRegistrarWindo
       [this](HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
         return WindowProc(hwnd, message, wparam, lparam);
       });
+  speech_ = std::make_unique<SpeechRecognizerChannel>(registrar);
 }
 
 EchoprompterWindowPlugin::~EchoprompterWindowPlugin() {

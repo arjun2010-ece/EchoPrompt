@@ -15,6 +15,8 @@
 
 namespace echoprompter_window {
 
+class SpeechRecognizerChannel;
+
 // Switches the single Flutter window between Studio and Prompter (top-most,
 // borderless, hidden from capture).
 class EchoprompterWindowPlugin : public flutter::Plugin {
@@ -85,6 +87,7 @@ class EchoprompterWindowPlugin : public flutter::Plugin {
   bool tray_added_ = false;
   std::vector<TrayEntry> tray_items_;
   std::vector<std::pair<int, std::string>> hotkeys_;  // Win32 hotkey id -> name
+  std::unique_ptr<SpeechRecognizerChannel> speech_;   // Voice and Audio mode's recogniser
 };
 
 }  // namespace echoprompter_window
