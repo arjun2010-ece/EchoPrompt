@@ -63,11 +63,38 @@ final class SpeechRecognizerChannel: NSObject, FlutterStreamHandler, AVCaptureAu
     private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
         case "isAvailable": available(result)
+        case "readiness": result(Self.readiness())
         case "setBias":
             bias = Array(((call.arguments as? [String]) ?? []).prefix(Self.maxBias))
             result(nil)
         default: result(FlutterMethodNotImplemented)
         }
+    }
+
+    /// What the reader still has to allow or turn on, without asking for anything: the speech and microphone
+    /// permissions ("authorized", "denied", "restricted", "notDetermined") and whether Dictation, which
+    /// Apple's recogniser needs, is "on", "off" or "unknown" (its setting may not be readable from the sandbox).
+    private static func readiness() -> [String: String] {
+        func name(_ speech: SFSpeechRecognizerAuthorizationStatus) -> String {
+            switch speech {
+            case .authorized: return "authorized"
+            case .denied: return "denied"
+            case .restricted: return "restricted"
+            default: return "notDetermined"
+            }
+        }
+        let mic: String
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: mic = "authorized"
+        case .denied: mic = "denied"
+        case .restricted: mic = "restricted"
+        default: mic = "notDetermined"
+        }
+        var dictation = "unknown"
+        if let v = CFPreferencesCopyAppValue("Dictation Enabled" as CFString, "com.apple.assistant.support" as CFString) as? NSNumber {
+            dictation = v.boolValue ? "on" : "off"
+        }
+        return ["speech": name(SFSpeechRecognizer.authorizationStatus()), "mic": mic, "dictation": dictation]
     }
 
     /// True once the reader has allowed speech recognition and English is supported; asks the first time.

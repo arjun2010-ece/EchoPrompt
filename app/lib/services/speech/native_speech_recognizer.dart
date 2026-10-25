@@ -10,6 +10,11 @@ class NativeSpeechRecognizer {
 
   Future<bool> isAvailable() async => await _method.invokeMethod<bool>('isAvailable') ?? false;
 
+  /// macOS: what the reader must still allow or turn on, without asking for anything. Keys `speech` and `mic`
+  /// ("authorized", "denied", "restricted", "notDetermined") and `dictation` ("on", "off", "unknown").
+  Future<Map<String, String>> readiness() async =>
+      (await _method.invokeMapMethod<String, String>('readiness')) ?? const {};
+
   /// Words the recogniser should favour; read when each listening session starts.
   Future<void> setBias(List<String> words) => _method.invokeMethod<void>('setBias', words);
 
