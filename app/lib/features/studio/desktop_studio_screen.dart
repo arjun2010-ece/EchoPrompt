@@ -9,6 +9,7 @@ import '../../core/script/reading_time.dart';
 import '../../core/settings/labels.dart';
 import '../../core/settings/prompt_settings.dart';
 import '../../services/providers.dart';
+import '../../services/speech/speech_requirements.dart';
 import '../../services/storage/script_io.dart';
 import '../../ui/discard_changes_dialog.dart';
 import '../../ui/position_picker.dart';
@@ -140,9 +141,33 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Exported to $path')));
   }
 
-  void _start() {
+  Future<void> _start() async {
     if (_dirty.value || ref.read(studioProvider).script.trim().isEmpty) return;
+    if (!await _speechSettingReady()) return;
     ref.read(studioProvider.notifier).start();
+  }
+
+  /// Voice and Audio mode need something only the reader can allow or turn on (Online speech recognition on
+  /// Windows; speech or microphone access and Dictation on macOS). Offers the Settings page first; "Start
+  /// anyway" goes on regardless, since a setting can't always be read.
+  Future<bool> _speechSettingReady() async {
+    if (ref.read(settingsProvider).mode == PromptControlMode.normal) return true;
+    final need = await unmetSpeechRequirement();
+    if (need == null || !mounted) return true;
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.mic_none_rounded, size: 32),
+        title: Text(need.title),
+        content: Text(need.message),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop('start'), child: const Text('Start anyway')),
+          FilledButton(onPressed: () => Navigator.of(context).pop('settings'), child: const Text('Open settings')),
+        ],
+      ),
+    );
+    if (choice == 'settings') await need.openSettings();
+    return choice == 'start';
   }
 
   void _preferences() => showPreferences(context);
@@ -545,6 +570,8 @@ class _Inspector extends ConsumerWidget {
                   if (mode == PromptControlMode.recordedAudio) ...[
                     const SizedBox(height: 10),
                     const _AudioChooser(),
+                    const SizedBox(height: 8),
+                    const _SpeakerHint(),
                   ],
                   const SizedBox(height: 22),
                   const _SectionTitle('Position'),
@@ -662,7 +689,7 @@ class _AudioChooser extends ConsumerWidget {
                 Text(
                   path == null
                       ? 'Pick the recording to follow.'
-                      : 'EchoPrompter transcribes it once, then follows along.',
+                      : 'Plays out loud while EchoPrompter follows it through the microphone.',
                   style: Theme.of(context).textTheme.bodySmall
                       ?.copyWith(color: scheme.onSurfaceVariant),
                 ),
@@ -678,6 +705,29 @@ class _AudioChooser extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Audio mode follows the file by listening to it, so it can't be played into a headset.
+class _SpeakerHint extends StatelessWidget {
+  const _SpeakerHint();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(Icons.info_outline, size: 16, color: theme.colorScheme.onSurfaceVariant),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            'Play the audio on your speakers, not a headset, so the microphone can hear it.',
+            style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+        ),
+      ],
     );
   }
 }
