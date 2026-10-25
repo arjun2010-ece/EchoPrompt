@@ -9,6 +9,7 @@ flutter run -d macos           # or windows / an iOS or Android device
 ```
 
 Running on macOS, step by step, with a manual test checklist: `docs/RUN_MACOS.md`.
+Windows setup and run instructions: `docs/RUN_WINDOWS.md`.
 
 Native plugins live in `../packages/`: `echoprompter_window` (desktop overlay) and `echoprompter_camera` (mobile camera).
 Set `--dart-define=SENTRY_DSN=...` to enable opt-in crash reporting.
