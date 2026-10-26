@@ -275,11 +275,12 @@ class _ScriptRow extends StatelessWidget {
         child: GestureDetector(
           onSecondaryTapUp: menuItems == null ? null : (d) => _contextMenu(context, d.globalPosition),
           child: Material(
+            // Desktop rows sit flat on the sidebar and the open one is highlighted blue.
             color: ticked
                 ? scheme.primary.withValues(alpha: 0.12)
                 : current
-                    ? scheme.primary.withValues(alpha: 0.14)
-                    : scheme.surfaceContainerLow,
+                    ? (dense ? scheme.primaryContainer : scheme.primary.withValues(alpha: 0.14))
+                    : (dense ? Colors.transparent : scheme.surfaceContainerLow),
             borderRadius: BorderRadius.circular(dense ? 14 : 20),
             clipBehavior: Clip.antiAlias,
             child: InkWell(

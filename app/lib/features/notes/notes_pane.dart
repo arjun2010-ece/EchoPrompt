@@ -143,7 +143,7 @@ class _NoteRow extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Material(
-        color: current ? scheme.primary.withValues(alpha: 0.14) : scheme.surfaceContainerLow,
+        color: current ? scheme.primaryContainer : Colors.transparent,
         borderRadius: BorderRadius.circular(14),
         clipBehavior: Clip.antiAlias,
         child: InkWell(

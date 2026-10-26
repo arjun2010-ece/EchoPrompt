@@ -12,6 +12,7 @@ import 'features/studio/desktop_studio_screen.dart';
 import 'features/studio/studio_screen.dart';
 import 'services/platform.dart';
 import 'services/providers.dart';
+import 'ui/desktop_theme.dart';
 import 'ui/mobile_theme.dart';
 import 'services/storage/migration.dart';
 import 'services/storage/script_library.dart';
@@ -63,6 +64,8 @@ ThemeData _theme(Brightness brightness) {
     (states) => states.contains(WidgetState.disabled) ? SystemMouseCursors.basic : SystemMouseCursors.click,
   );
   final style = ButtonStyle(mouseCursor: cursor);
+  // Dark is the designed look: the palette from the macOS design. Light keeps the standard Material scheme.
+  if (brightness == Brightness.dark) return desktopDarkTheme(style);
   return ThemeData(
     colorSchemeSeed: Colors.orange,
     brightness: brightness,

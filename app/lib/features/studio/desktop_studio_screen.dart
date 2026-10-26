@@ -319,6 +319,7 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
     });
 
     final notes = ref.watch(libraryTabProvider) == LibraryTab.notes;
+    final scheme = Theme.of(context).colorScheme;
     final width = MediaQuery.sizeOf(context).width;
     final threeColumns = width >= 1090;
     final stacked = width < 780;
@@ -346,7 +347,7 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
       body = Row(
         children: [
           if (threeColumns) ...[
-            SizedBox(width: 300, child: history),
+            SizedBox(width: 300, child: ColoredBox(color: scheme.surfaceContainer, child: history)),
             const VerticalDivider(width: 1),
           ],
           Expanded(child: NotesPane(onImport: _importNote)),
@@ -364,12 +365,12 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
       body = Row(
         children: [
           if (threeColumns) ...[
-            SizedBox(width: 300, child: history),
+            SizedBox(width: 300, child: ColoredBox(color: scheme.surfaceContainer, child: history)),
             const VerticalDivider(width: 1),
           ],
           Expanded(flex: 5, child: editor),
           const VerticalDivider(width: 1),
-          SizedBox(width: 400, child: inspector),
+          SizedBox(width: 400, child: ColoredBox(color: scheme.surfaceContainerLow, child: inspector)),
         ],
       );
     }
