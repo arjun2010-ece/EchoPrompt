@@ -390,6 +390,7 @@ You test every platform, every mode, and match against the POC:
    - Script ID and fingerprint validation.
    - 30-day offline limit and advance warning from day 25.
    - Local token storage with signature verification.
+   - **Turn the lock on:** the Pro screens (Studio upgrade card, locked Start, paywall, Pro tab, offline alert) are already built (`app/docs/ui-improvements.md` E5) and everything is unlocked until then. The free-script counter and locking sit behind one flag (`proEnforced`, default off). In this phase: connect the store purchase, restore and sign-in to the paywall, replace its "Purchases aren't available in this build yet" message, then switch the flag on. Also wire `showSubscriptionCheckAlert` (30 days offline), add Terms and Privacy links to the paywall once those pages exist, and fingerprint-based counting (a rewritten script counts as new).
 3. **Backend (Supabase):** defer exact implementation to Phase 3. We'll discuss your ideas on how to minimize costs before launch.
    - Entitlement token signing (Ed25519).
    - Free-script counter by device and account.

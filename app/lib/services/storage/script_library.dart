@@ -9,7 +9,7 @@ import '../../core/script/saved_script.dart';
 /// Script history: JSON metadata in preferences (same key as the POC), bodies
 /// as readable `.txt` files in [directory]. Max 20 entries.
 class ScriptLibrary {
-  ScriptLibrary(this.directory, this._prefs);
+  ScriptLibrary(this.directory, this._prefs, {this.key = historyKey});
 
   static const historyKey = 'EchoPrompter.scriptHistory.v1';
   static const maxEntries = 20;
@@ -17,8 +17,11 @@ class ScriptLibrary {
   final Directory directory;
   final SharedPreferences _prefs;
 
+  /// Where the history is kept in preferences; notes use their own so the two lists never mix.
+  final String key;
+
   List<SavedScript> load() {
-    final raw = _prefs.getString(historyKey);
+    final raw = _prefs.getString(key);
     if (raw == null) return [];
     final list = (jsonDecode(raw) as List).cast<Map<String, Object?>>();
     return [
@@ -37,14 +40,28 @@ class ScriptLibrary {
       body: f.readAsStringSync(),
       savedAt: DateTime.parse(m['savedAt'] as String),
       fileName: name,
+      customTitle: m['title'] as String?,
     );
   }
 
   Future<List<SavedScript>> save(List<SavedScript> history, SavedScript script) async {
     await directory.create(recursive: true);
-    final name = script.fileName ?? _fileName(script, history);
+    var name = script.fileName ?? _fileName(script, history);
+    // A changed title renames the file too, so the folder keeps reading like the list.
+    final old = history.where((s) => s.id == script.id).firstOrNull;
+    if (old != null && script.fileName != null && script.hasCustomTitle && old.customTitle?.trim() != script.customTitle?.trim()) {
+      final next = _fileName(script, history);
+      if (next != name) {
+        try {
+          await File(p.join(directory.path, name)).rename(p.join(directory.path, next));
+          name = next;
+        } on FileSystemException {
+          // Keep the old file name; the script still saves.
+        }
+      }
+    }
     await File(p.join(directory.path, name)).writeAsString(script.body);
-    final saved = SavedScript(id: script.id, body: script.body, savedAt: DateTime.now(), fileName: name);
+    final saved = SavedScript(id: script.id, body: script.body, savedAt: DateTime.now(), fileName: name, customTitle: script.customTitle);
     final next = [saved, ...history.where((s) => s.id != script.id)];
     final kept = next.take(maxEntries).toList();
     await persist(kept);
@@ -60,7 +77,7 @@ class ScriptLibrary {
   }
 
   Future<void> persist(List<SavedScript> h) =>
-      _prefs.setString(historyKey, jsonEncode([for (final s in h) s.toJson()]));
+      _prefs.setString(key, jsonEncode([for (final s in h) s.toJson()]));
 
   /// File name from the script's first line; numbered when taken.
   String _fileName(SavedScript s, List<SavedScript> history) {

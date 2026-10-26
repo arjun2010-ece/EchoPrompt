@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/script/saved_script.dart';
 import '../platform.dart';
 
 /// Script import/export. Mobile exports go through the share sheet, which on
@@ -28,7 +29,11 @@ class ScriptIO {
 
   /// [scriptsDir] is the library folder; imports open there until the user
   /// picks somewhere else.
-  static Future<String?> importText(SharedPreferences prefs, Directory scriptsDir) async {
+  static Future<String?> importText(SharedPreferences prefs, Directory scriptsDir) async =>
+      (await importTextFile(prefs, scriptsDir))?.text;
+
+  /// Like [importText], with the file's name so desktop can title the script after it.
+  static Future<({String name, String text})?> importTextFile(SharedPreferences prefs, Directory scriptsDir) async {
     final f = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: ['txt', 'md'],
@@ -37,7 +42,7 @@ class ScriptIO {
     if (f == null) return null;
     if (f.path != null) await prefs.setString(_importDirKey, p.dirname(f.path!));
     final bytes = await f.readAsBytes();
-    return utf8.decode(bytes, allowMalformed: true);
+    return (name: f.name, text: utf8.decode(bytes, allowMalformed: true));
   }
 
   /// Returns the saved path on desktop, or null if cancelled or shared.
@@ -87,4 +92,14 @@ class ScriptIO {
       await Process.run('explorer', [p.normalize(dir.path)]);
     }
   }
+}
+
+/// A script title from an imported file's name: no extension, cut at a word boundary to the title
+/// limit. Empty when nothing usable is left, so the first line shows instead.
+String titleFromFileName(String fileName) {
+  final stem = p.basenameWithoutExtension(fileName).replaceAll(RegExp(r'[_\s]+'), ' ').trim();
+  if (stem.length <= SavedScript.maxTitleLength) return stem;
+  final cut = stem.substring(0, SavedScript.maxTitleLength);
+  final space = cut.lastIndexOf(' ');
+  return (space > 8 ? cut.substring(0, space) : cut).trim();
 }

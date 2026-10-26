@@ -130,7 +130,16 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
     _followTarget = 0;
     _lastConfirmed = -1;
     if (_scroll.hasClients) _scroll.jumpTo(0);
-    if (!widget.isPreview) ref.read(readingWordProvider.notifier).set(0);
+    if (!widget.isPreview) {
+      ref.read(readingWordProvider.notifier).set(0);
+      _publishRemaining();
+    }
+  }
+
+  /// Tells the progress line how much text is left to scroll (Normal mode's time left).
+  void _publishRemaining() {
+    if (!_scroll.hasClients) return;
+    ref.read(scrollRemainingProvider.notifier).set(math.max(0.0, _scroll.position.maxScrollExtent - _offset));
   }
 
   /// Tells Studio where the presenter is, a few times a second at most.
@@ -140,6 +149,7 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
     _lastReport = now;
     final y = _offset + _anchorY - _topPad;
     ref.read(readingWordProvider.notifier).set(layout.nearestWord(Offset(layout.painter.width / 2, y)));
+    _publishRemaining();
   }
 
   void _tick(Duration now) {
@@ -201,7 +211,7 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
 
     Widget body = LayoutBuilder(builder: (context, c) {
       final h = c.maxHeight;
-      final hPad = style == PromptLayoutStyle.full ? 56.0 : (notch ? 16.0 : 20.0);
+      final hPad = (style == PromptLayoutStyle.full ? 56.0 : (notch ? 16.0 : 20.0)) * settings.margins.scale;
       // Small layouts keep at least ~2 lines visible.
       final fontSize = style == PromptLayoutStyle.full
           ? settings.fontSize
@@ -223,12 +233,27 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
         fontSize: fontSize,
         height: settings.lineSpacing,
         fontWeight: FontWeight.w500,
+        fontFamily: settings.font.family,
         color: textColor,
       );
-      final key = (script, fontSize, settings.lineSpacing, width);
+      final key = (script, fontSize, settings.lineSpacing, width, settings.font, settings.showSections);
       if (_layoutKey != key) {
+        // A different wrap (margins, font, size) moves words, so keep the word on the reading
+        // line where it was instead of leaving the offset to land somewhere else.
+        final old = _layout;
+        final held = !preview && old != null && _offset > 0
+            ? old.nearestWord(Offset(old.painter.width / 2, _offset + anchorY - topPad))
+            : null;
         _layoutKey = key;
-        _layout = WordLayout(script, base, width, align: TextAlign.center);
+        _layout = WordLayout(script, base, width, align: TextAlign.center, showSections: settings.showSections);
+        if (!preview) WidgetsBinding.instance.addPostFrameCallback((_) => mounted ? _publishRemaining() : null);
+        if (held != null && held < _layout!.ranges.length) {
+          _offset = math.max(0.0, topPad + _layout!.midY(held) - anchorY);
+          _followTarget = _offset;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_scroll.hasClients) _scroll.jumpTo(_offset.clamp(0.0, _scroll.position.maxScrollExtent).toDouble());
+          });
+        }
       }
       final layout = _layout!;
 
@@ -265,7 +290,7 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
       }
 
       Widget text = Text.rich(
-        _spans(script, layout, base, pr.progress, textColor),
+        _spans(layout.script, layout, base, pr.progress, textColor),
         textAlign: TextAlign.center,
         textWidthBasis: TextWidthBasis.parent,
       );
@@ -279,6 +304,17 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
         padding: EdgeInsets.fromLTRB(hPad, topPad, hPad, bottomPad),
         child: SizedBox(width: double.infinity, child: text),
       );
+
+      // Small `› ‹` marks on the reading line (desktop). They sit still while the text moves to them,
+      // and are symmetric, so mirroring and 180° rotation need no special case.
+      if (settings.readingGuide && !isMobile) {
+        final mark = TextStyle(fontSize: math.max(14.0, math.min(22.0, fontSize * 0.6)), height: 1, fontWeight: FontWeight.w700, color: Colors.white.withValues(alpha: 0.5));
+        scroller = Stack(children: [
+          Positioned.fill(child: scroller),
+          Positioned(left: 6, top: anchorY - mark.fontSize! / 2, child: IgnorePointer(child: Text('›', style: mark))),
+          Positioned(right: 6, top: anchorY - mark.fontSize! / 2, child: IgnorePointer(child: Text('‹', style: mark))),
+        ]);
+      }
 
       if (preview) return IgnorePointer(child: scroller);
       if (widget.onDragStart != null) {
@@ -324,7 +360,7 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
     var cursor = 0;
     for (var i = 0; i < layout.ranges.length; i++) {
       final r = layout.ranges[i];
-      if (r.start > cursor) children.add(TextSpan(text: script.substring(cursor, r.start)));
+      if (r.start > cursor) children.addAll(layout.gapSpans(cursor, r.start));
       final style = switch (progress.stateFor(i)) {
         WordState.completed => TextStyle(color: text.withValues(alpha: 0.46)),
         WordState.current => const TextStyle(
@@ -342,7 +378,7 @@ class _PromptSurfaceState extends ConsumerState<PromptSurface> with SingleTicker
       children.add(TextSpan(text: script.substring(r.start, r.end), style: style));
       cursor = r.end;
     }
-    if (cursor < script.length) children.add(TextSpan(text: script.substring(cursor)));
+    if (cursor < script.length) children.addAll(layout.gapSpans(cursor, script.length));
     return TextSpan(style: base, children: children);
   }
 }

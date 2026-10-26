@@ -4,8 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/entitlements/entitlements.dart';
 import '../../core/script/clean_script.dart';
 import '../../core/script/reading_time.dart';
+import '../../core/script/saved_script.dart';
+import '../../core/script/sections.dart';
 import '../../core/settings/labels.dart';
 import '../../core/settings/prompt_settings.dart';
 import '../../services/providers.dart';
@@ -15,8 +18,16 @@ import '../../ui/discard_changes_dialog.dart';
 import '../../ui/position_picker.dart';
 import '../../ui/prompt_text_controls.dart';
 import '../settings/preferences_screen.dart';
+import '../pro/paywall_dialog.dart';
+import '../pro/pro_state.dart';
+import '../pro/upgrade_card.dart';
+import '../menu/studio_commands.dart';
+import '../notes/notes_pane.dart';
+import '../notes/notes_state.dart';
+import 'audio_check.dart';
 import 'prompt_preview.dart';
 import 'script_list.dart';
+import 'script_text_controller.dart';
 
 const _positionTipKey = 'EchoPrompter.positionTip.dismissed.v1';
 
@@ -34,6 +45,7 @@ class DesktopStudioScreen extends ConsumerStatefulWidget {
 
 class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
   late final TextEditingController _controller;
+  late final TextEditingController _titleController;
   final _focus = FocusNode();
   final _caretWord = ValueNotifier<int>(0);
   final _scaffold = GlobalKey<ScaffoldState>();
@@ -43,7 +55,11 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
 
   bool get _mac => isMacOS;
 
-  bool get _isDirty => _controller.text != ref.read(studioProvider).script;
+  bool get _isDirty {
+    final studio = ref.read(studioProvider);
+    return _controller.text != studio.script ||
+        _titleController.text.trim() != studio.title.trim();
+  }
 
   void _publishDirty() => _dirty.value = _isDirty;
 
@@ -56,6 +72,7 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
       text: ref.read(studioProvider).script,
       selection: const TextSelection.collapsed(offset: 0),
     );
+    _titleController.text = ref.read(studioProvider).title;
     _publishDirty();
   }
 
@@ -64,28 +81,63 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
   }
 
   Future<void> _save() async {
+    if (_onNotes) return ref.read(noteEditorSaveProvider)?.call();
     final cleaned = cleanScript(_controller.text);
     if (!_dirty.value || cleaned.isEmpty) return;
     _controller.value = TextEditingValue(
       text: cleaned,
       selection: TextSelection.collapsed(offset: _controller.selection.baseOffset.clamp(0, cleaned.length)),
     );
-    final saved = ref.read(studioProvider.notifier).commitScript(cleaned);
+    final saved = ref
+        .read(studioProvider.notifier)
+        .commitScript(cleaned, title: _titleController.text.trim());
     _publishDirty();
     await saved;
   }
 
   Future<void> _newScript() async {
-    if (await _canReplaceDraft()) ref.read(studioProvider.notifier).newScript();
+    if (!await _canReplaceDraft()) return;
+    ref.read(libraryTabProvider.notifier).show(LibraryTab.scripts);
+    ref.read(studioProvider.notifier).newScript();
+  }
+
+  bool get _onNotes => ref.read(libraryTabProvider) == LibraryTab.notes;
+
+  Future<void> _newNote() async {
+    if (!await canLeaveNoteDraft(context, ref)) return;
+    ref.read(libraryTabProvider.notifier).show(LibraryTab.notes);
+    ref.read(notesProvider.notifier).startNew();
   }
 
   @override
   void initState() {
     super.initState();
     final studio = ref.read(studioProvider);
-    _controller = TextEditingController(text: studio.script)
+    _controller = ScriptTextController(text: studio.script)
       ..selection = const TextSelection.collapsed(offset: 0)
       ..addListener(_onCaretMoved);
+    _titleController = TextEditingController(text: studio.title)
+      ..addListener(_publishDirty);
+    // The menu bar reaches the Studio through these while it is showing.
+    Future.microtask(
+      () => _commandSlot.set(
+        StudioCommands(
+          newScript: _newScript,
+          newNote: _newNote,
+          importFile: _import,
+          exportFile: _export,
+          save: _save,
+          insertSection: _insertSection,
+          start: _start,
+          settings: _preferences,
+          showScriptsFolder: () => ScriptIO.reveal(ref.read(libraryProvider).directory),
+          showNotesFolder: () => ScriptIO.reveal(ref.read(notesLibraryProvider).directory),
+          deleteScript: _deleteScript,
+          showScripts: () => _showTab(LibraryTab.scripts),
+          showNotes: () => _showTab(LibraryTab.notes),
+        ),
+      ),
+    );
     // Coming back from the prompter: put the caret where the presenter stopped.
     final resume = studio.resumeWordIndex;
     if (resume != null) {
@@ -101,9 +153,26 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
     }
   }
 
+  /// Deletes the open script, after asking, like the list's Delete.
+  Future<void> _deleteScript() async {
+    if (_onNotes) return;
+    final id = ref.read(studioProvider.notifier).currentId;
+    final script = ref.read(studioProvider).history.where((s) => s.id == id).firstOrNull;
+    if (script != null) await confirmDeleteScripts(context, ref, [script]);
+  }
+
+  Future<void> _showTab(LibraryTab tab) async {
+    if (tab == LibraryTab.scripts && !await canLeaveNoteDraft(context, ref)) return;
+    ref.read(libraryTabProvider.notifier).show(tab);
+  }
+
+  late final StudioCommandsNotifier _commandSlot = ref.read(studioCommandsProvider.notifier);
+
   @override
   void dispose() {
+    Future.microtask(() => _commandSlot.set(null));
     _controller.dispose();
+    _titleController.dispose();
     _focus.dispose();
     _caretWord.dispose();
     _dirty.dispose();
@@ -118,21 +187,43 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
     );
   }
 
+  Future<void> _importNote() async {
+    if (!await canLeaveNoteDraft(context, ref)) return;
+    final file = await ScriptIO.importTextFile(ref.read(prefsProvider), ref.read(notesLibraryProvider).directory);
+    if (file != null) await ref.read(notesProvider.notifier).importNote(file.name, file.text);
+  }
+
   Future<void> _import() async {
+    if (_onNotes) return _importNote();
     if (!await _canReplaceDraft()) return;
-    final text = await ScriptIO.importText(
+    final file = await ScriptIO.importTextFile(
       ref.read(prefsProvider),
       ref.read(libraryProvider).directory,
     );
-    if (text != null) {
-      await ref.read(studioProvider.notifier).importScript(text);
+    if (file != null) {
+      await ref
+          .read(studioProvider.notifier)
+          .importScript(file.text, title: titleFromFileName(file.name));
     }
   }
 
   Future<void> _export() async {
-    final body = ref.read(studioProvider).script;
+    if (_onNotes) {
+      final note = ref.read(notesProvider).current;
+      if (note == null) return;
+      final path = await ScriptIO.exportText(
+        note.title,
+        note.body,
+        prefs: ref.read(prefsProvider),
+        scriptsDir: ref.read(notesLibraryProvider).directory,
+      );
+      if (path != null && mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Exported to $path')));
+      return;
+    }
+    final studio = ref.read(studioProvider);
+    final body = studio.script;
     final path = await ScriptIO.exportText(
-      body.split('\n').first,
+      studio.title.trim().isNotEmpty ? studio.title : body.split('\n').first,
       body,
       prefs: ref.read(prefsProvider),
       scriptsDir: ref.read(libraryProvider).directory,
@@ -142,9 +233,23 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
   }
 
   Future<void> _start() async {
+    if (_onNotes) return; // notes are never presented
     if (_dirty.value || ref.read(studioProvider).script.trim().isEmpty) return;
+    if (ref.read(settingsProvider).mode == PromptControlMode.recordedAudio &&
+        audioStartBlocker(ref.read(audioCheckProvider)) != null) {
+      return;
+    }
+    // A 6th new script on the free plan opens the plans straight away: one click to buy.
+    final studio = ref.read(studioProvider.notifier);
+    if (!ref.read(proProvider).canPresent(studio.currentId)) {
+      if (mounted) await showPaywall(context, reason: 'You\'ve used your $freeScriptLimit free scripts.');
+      return;
+    }
     if (!await _speechSettingReady()) return;
-    ref.read(studioProvider.notifier).start();
+    studio.start();
+    // The built-in demo is never saved, so it never counts toward the free scripts.
+    final id = studio.currentId;
+    if (id != null) ref.read(proProvider.notifier).recordStart(id);
   }
 
   /// Voice and Audio mode need something only the reader can allow or turn on (speech or microphone access
@@ -172,6 +277,29 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
 
   void _preferences() => showPreferences(context);
 
+  /// Puts a new `[Section N]` line at the caret, on a line of its own, with its name selected to type over.
+  void _insertSection() {
+    if (_onNotes) return;
+    final studio = ref.read(studioProvider);
+    if (studio.script == StudioNotifier.welcome && ref.read(studioProvider.notifier).currentId == null) return;
+    final text = _controller.text;
+    final sel = _controller.selection;
+    final at = sel.isValid ? sel.start : text.length;
+    final name = 'Section ${sectionMarkers(text).length + 1}';
+    final lead = at > 0 && text[at - 1] != '\n' ? '\n' : '';
+    final inserted = '$lead[$name]\n';
+    final nameStart = at + lead.length + 1;
+    _controller.value = TextEditingValue(
+      text: text.replaceRange(at, sel.isValid ? sel.end : at, inserted),
+      selection: TextSelection(
+        baseOffset: nameStart,
+        extentOffset: nameStart + name.length,
+      ),
+    );
+    _focus.requestFocus();
+    _publishDirty();
+  }
+
   void _closeDrawer() {
     final s = _scaffold.currentState;
     if (s != null && s.isDrawerOpen) s.closeDrawer();
@@ -186,20 +314,24 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
         text: script,
         selection: const TextSelection.collapsed(offset: 0),
       );
+      _titleController.text = ref.read(studioProvider).title;
       _publishDirty();
     });
 
+    final notes = ref.watch(libraryTabProvider) == LibraryTab.notes;
     final width = MediaQuery.sizeOf(context).width;
-    final threeColumns = width >= 1040;
+    final threeColumns = width >= 1090;
     final stacked = width < 780;
     final history = _ScriptList(onPicked: _closeDrawer, onNew: _closeDrawer, canReplace: _canReplaceDraft);
     final editor = _EditorPane(
       controller: _controller,
+      titleController: _titleController,
       focus: _focus,
       dirty: _dirty,
       onEdited: _publishDirty,
       onSave: _save,
       onCancel: _cancel,
+      onInsertSection: _insertSection,
     );
     final inspector = _Inspector(
       caretWord: _caretWord,
@@ -208,8 +340,19 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
       onPreferences: _preferences,
     );
 
+    // Notes are never presented, so while they show there is no inspector (no Follow, Position or Start).
     final Widget body;
-    if (stacked) {
+    if (notes) {
+      body = Row(
+        children: [
+          if (threeColumns) ...[
+            SizedBox(width: 300, child: history),
+            const VerticalDivider(width: 1),
+          ],
+          Expanded(child: NotesPane(onImport: _importNote)),
+        ],
+      );
+    } else if (stacked) {
       body = Column(
         children: [
           Expanded(flex: 2, child: editor),
@@ -221,7 +364,7 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
       body = Row(
         children: [
           if (threeColumns) ...[
-            SizedBox(width: 250, child: history),
+            SizedBox(width: 300, child: history),
             const VerticalDivider(width: 1),
           ],
           Expanded(flex: 5, child: editor),
@@ -242,8 +385,14 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
             _import,
         SingleActivator(LogicalKeyboardKey.keyN, meta: _mac, control: !_mac):
             _newScript,
+        SingleActivator(LogicalKeyboardKey.keyN, meta: _mac, control: !_mac, alt: true):
+            _newNote,
+        SingleActivator(LogicalKeyboardKey.keyS, meta: _mac, control: !_mac, shift: true):
+            _export,
         SingleActivator(LogicalKeyboardKey.keyS, meta: _mac, control: !_mac):
             _save,
+        SingleActivator(LogicalKeyboardKey.keyK, meta: _mac, control: !_mac):
+            _insertSection,
       },
       child: Scaffold(
         key: _scaffold,
@@ -262,28 +411,29 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
                 ),
           actions: [
             IconButton(
-              tooltip: 'New script (${mod}N)',
+              tooltip: notes ? 'New note (${_mac ? '⌥⌘N' : 'Ctrl+Alt+N'})' : 'New script (${mod}N)',
               icon: const Icon(Icons.note_add_outlined),
-              onPressed: _newScript,
+              onPressed: notes ? _newNote : _newScript,
             ),
             IconButton(
-              tooltip: 'Import script (${mod}O)',
+              tooltip: '${notes ? 'Import note' : 'Import script'} (${mod}O)',
               icon: const Icon(Icons.file_open_outlined),
               onPressed: _import,
             ),
             IconButton(
-              tooltip: 'Export script',
+              tooltip: 'Export ${notes ? 'note' : 'script'} (${_mac ? '⇧⌘S' : 'Ctrl+Shift+S'})',
               icon: const Icon(Icons.ios_share),
               onPressed: _export,
             ),
             IconButton(
-              tooltip: 'Show scripts folder',
+              tooltip: notes ? 'Show notes folder' : 'Show scripts folder',
               icon: const Icon(Icons.folder_open),
-              onPressed: () =>
-                  ScriptIO.reveal(ref.read(libraryProvider).directory),
+              onPressed: () => ScriptIO.reveal(
+                ref.read(notes ? notesLibraryProvider : libraryProvider).directory,
+              ),
             ),
             IconButton(
-              tooltip: 'Preferences ($mod,)',
+              tooltip: 'Settings ($mod,)',
               icon: const Icon(Icons.settings_outlined),
               onPressed: _preferences,
             ),
@@ -315,11 +465,35 @@ class _ScriptList extends ConsumerWidget {
     ref.watch(studioProvider.select((s) => s.scriptRevision));
     final notifier = ref.read(studioProvider.notifier);
     final scheme = Theme.of(context).colorScheme;
+    final tab = ref.watch(libraryTabProvider);
+    final tabs = Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: SizedBox(
+        width: double.infinity,
+        child: SegmentedButton<LibraryTab>(
+          showSelectedIcon: false,
+          style: const ButtonStyle(visualDensity: VisualDensity.compact),
+          segments: const [
+            ButtonSegment(value: LibraryTab.scripts, label: Text('Scripts')),
+            ButtonSegment(value: LibraryTab.notes, label: Text('Notes')),
+          ],
+          selected: {tab},
+          onSelectionChanged: (v) async {
+            if (v.first == LibraryTab.scripts && !await canLeaveNoteDraft(context, ref)) return;
+            ref.read(libraryTabProvider.notifier).show(v.first);
+          },
+        ),
+      ),
+    );
+    if (tab == LibraryTab.notes) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [tabs, const Expanded(child: NoteSidebar()), const UpgradeCard()]);
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        tabs,
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 8, 6),
+          padding: const EdgeInsets.fromLTRB(16, 10, 8, 6),
           child: Row(
             children: [
               Text(
@@ -348,6 +522,7 @@ class _ScriptList extends ConsumerWidget {
             child: ScriptListBody(
               history: history,
               dense: true,
+              showPreview: true,
               onOpen: (s) async {
                 if (!await canReplace()) return;
                 notifier.load(s);
@@ -386,6 +561,8 @@ class _ScriptList extends ConsumerWidget {
             ),
           ),
         ),
+        // While scripts are being selected the selection bar takes the card's place.
+        if (ref.watch(scriptSelectionProvider) == null) const UpgradeCard(),
         ScriptSelectionBar(history: history),
       ],
     );
@@ -397,18 +574,22 @@ class _ScriptList extends ConsumerWidget {
 class _EditorPane extends ConsumerWidget {
   const _EditorPane({
     required this.controller,
+    required this.titleController,
     required this.focus,
     required this.dirty,
     required this.onEdited,
     required this.onSave,
     required this.onCancel,
+    required this.onInsertSection,
   });
   final TextEditingController controller;
+  final TextEditingController titleController;
   final FocusNode focus;
   final ValueNotifier<bool> dirty;
   final VoidCallback onEdited;
   final VoidCallback onSave;
   final VoidCallback onCancel;
+  final VoidCallback onInsertSection;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -416,85 +597,171 @@ class _EditorPane extends ConsumerWidget {
     // The built-in demo is for looking at: it has no Save and Cancel and can't be edited, so a draft
     // can't get stuck on it. Create a script (New) to write your own.
     ref.watch(studioProvider.select((s) => s.scriptRevision));
-    final demo = script == StudioNotifier.welcome && ref.read(studioProvider.notifier).currentId == null;
-    final words = wordCount(script);
-    final scheme = Theme.of(context).colorScheme;
-    final time = readingTimeLabel(
-      words,
-      wordsPerMinute: spokenWordsPerMinute.toDouble(),
-    );
-    return Padding(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
+    final demo =
+        script == StudioNotifier.welcome &&
+        ref.read(studioProvider.notifier).currentId == null;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final mod = isMacOS ? '⌘' : 'Ctrl+';
+    return LayoutBuilder(
+      builder: (context, box) {
+        // Narrow editors keep Insert Section as an icon, so the word count still has room.
+        final compact = box.maxWidth < 600;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(28, 20, 28, 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                'Your script',
-                style: Theme.of(context).textTheme.titleMedium,
+              // The title names the script in the list and its file. Typing is a draft until Save, like the text.
+              if (demo)
+                Text(
+                  'Welcome to EchoPrompter',
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                )
+              else
+                ListenableBuilder(
+                  listenable: titleController,
+                  builder: (context, _) {
+                    final n = titleController.text.characters.length;
+                    return TextField(
+                      controller: titleController,
+                      inputFormatters: [
+                        LengthLimitingTextInputFormatter(
+                          SavedScript.maxTitleLength,
+                        ),
+                      ],
+                      maxLines: 1,
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                      decoration: InputDecoration(
+                        hintText: 'Title',
+                        border: InputBorder.none,
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 4),
+                        // A counter only when the limit is near, so it doesn't clutter a short title.
+                        suffixText: n >= 20
+                            ? '$n/${SavedScript.maxTitleLength}'
+                            : null,
+                        suffixStyle: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              const SizedBox(height: 8),
+              Divider(height: 1, color: scheme.outlineVariant),
+              const SizedBox(height: 10),
+              // Edits stay a draft until Save; Cancel puts the saved script back.
+              Row(
+                children: [
+                  Expanded(
+                    // Counts the text as typed, not only as saved, so Insert Section shows at once.
+                    child: ListenableBuilder(
+                      listenable: controller,
+                      builder: (context, _) {
+                        final text = demo ? script : controller.text;
+                        final words = wordCount(text);
+                        final time = readingTimeLabel(
+                          words,
+                          wordsPerMinute: spokenWordsPerMinute.toDouble(),
+                        );
+                        final sections = sectionMarkers(text).length;
+                        return Text(
+                          words == 0
+                              ? 'Empty'
+                              : '$words words${time.isEmpty ? '' : ' · $time'}${sections == 0 ? '' : ' · $sections ${sections == 1 ? 'section' : 'sections'}'}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  if (!demo) ...[
+                    Tooltip(
+                      message: 'Insert Section (${mod}K)',
+                      child: compact
+                          ? IconButton.outlined(
+                              onPressed: onInsertSection,
+                              icon: const Icon(
+                                Icons.horizontal_split,
+                                size: 16,
+                              ),
+                              visualDensity: VisualDensity.compact,
+                            )
+                          : OutlinedButton.icon(
+                              onPressed: onInsertSection,
+                              icon: const Icon(
+                                Icons.horizontal_split,
+                                size: 16,
+                              ),
+                              label: const Text('Insert Section'),
+                              style: OutlinedButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                              ),
+                            ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  if (!demo)
+                    ValueListenableBuilder<bool>(
+                      valueListenable: dirty,
+                      builder: (context, dirty, _) => ListenableBuilder(
+                        listenable: controller,
+                        builder: (context, _) => Row(
+                          children: [
+                            TextButton(
+                              onPressed: dirty ? onCancel : null,
+                              child: const Text('Cancel'),
+                            ),
+                            const SizedBox(width: 8),
+                            FilledButton(
+                              onPressed:
+                                  dirty &&
+                                      cleanScript(controller.text).isNotEmpty
+                                  ? onSave
+                                  : null,
+                              child: const Text('Save'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
               ),
-              const SizedBox(width: 12),
+              const SizedBox(height: 12),
               Expanded(
-                child: Text(
-                  words == 0
-                      ? 'Empty'
-                      : '$words words${time.isEmpty ? '' : ' · $time'}',
-                  textAlign: TextAlign.end,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyMedium
-                      ?.copyWith(color: scheme.onSurfaceVariant),
+                child: TextField(
+                  controller: controller,
+                  focusNode: focus,
+                  readOnly: demo,
+                  autofocus: true,
+                  maxLines: null,
+                  expands: true,
+                  textAlignVertical: TextAlignVertical.top,
+                  style: const TextStyle(fontSize: 18, height: 1.45),
+                  onChanged: (_) => onEdited(),
+                  decoration: InputDecoration(
+                    hintText: 'Script: paste or type it here…',
+                    filled: true,
+                    fillColor: scheme.surfaceContainerLow,
+                    contentPadding: const EdgeInsets.all(16),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          // Edits stay a draft until Save; Cancel puts the saved script back.
-          if (!demo) ...[
-          ValueListenableBuilder<bool>(
-            valueListenable: dirty,
-            builder: (context, dirty, _) => ListenableBuilder(
-              listenable: controller,
-              builder: (context, _) => Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(onPressed: dirty ? onCancel : null, child: const Text('Cancel')),
-                  const SizedBox(width: 8),
-                  FilledButton(
-                    onPressed: dirty && cleanScript(controller.text).isNotEmpty ? onSave : null,
-                    child: const Text('Save'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          ],
-          Expanded(
-            child: TextField(
-              controller: controller,
-              focusNode: focus,
-              readOnly: demo,
-              autofocus: true,
-              maxLines: null,
-              expands: true,
-              textAlignVertical: TextAlignVertical.top,
-              style: const TextStyle(fontSize: 18, height: 1.45),
-              onChanged: (_) => onEdited(),
-              decoration: InputDecoration(
-                hintText: 'Paste or type your script here…',
-                filled: true,
-                fillColor: scheme.surfaceContainerLow,
-                contentPadding: const EdgeInsets.all(16),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -522,6 +789,13 @@ class _Inspector extends ConsumerWidget {
     );
     final scheme = Theme.of(context).colorScheme;
     final startKey = isMacOS ? '⌘↩' : 'Ctrl+Enter';
+    // Audio mode only starts with a recording that has been checked and can be read.
+    final audioBlock = mode == PromptControlMode.recordedAudio
+        ? audioStartBlocker(ref.watch(audioCheckProvider))
+        : null;
+    // A script the free plan can't present: Start shows a lock and opens the plans.
+    ref.watch(studioProvider.select((s) => s.scriptRevision));
+    final locked = !ref.watch(proProvider.select((p) => p.canPresent(ref.read(studioProvider.notifier).currentId)));
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -578,8 +852,8 @@ class _Inspector extends ConsumerWidget {
                   const PositionPicker(),
                   const _PositionTip(),
                   const SizedBox(height: 22),
-                  const _SectionTitle('Text'),
-                  const PromptTextControls(),
+                  const _SectionTitle('Text', trailing: ResetTextButton()),
+                  const PromptTextControls(collapsible: true),
                   const SizedBox(height: 12),
                 ],
               ),
@@ -622,14 +896,33 @@ class _Inspector extends ConsumerWidget {
                   ValueListenableBuilder<bool>(
                     valueListenable: dirty,
                     builder: (context, unsaved, _) => FilledButton.icon(
-                      onPressed: empty || unsaved ? null : onStart,
-                      icon: const Icon(Icons.play_arrow),
+                      onPressed: empty || unsaved || audioBlock != null
+                          ? null
+                          : onStart,
+                      icon: Icon(locked ? Icons.lock_outline : Icons.play_arrow),
                       label: Text('Start  $startKey'),
                       style: FilledButton.styleFrom(
                         minimumSize: const Size.fromHeight(48),
                       ),
                     ),
                   ),
+                  if (locked && audioBlock == null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      'Needs Pro. You\'ve used your $freeScriptLimit free scripts.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: proAccent),
+                    ),
+                  ],
+                  if (audioBlock != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      audioBlock,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall
+                          ?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -641,18 +934,26 @@ class _Inspector extends ConsumerWidget {
 }
 
 class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.text);
+  const _SectionTitle(this.text, {this.trailing});
   final String text;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 10),
-    child: Text(
-      text.toUpperCase(),
-      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-        letterSpacing: 1,
-        color: Theme.of(context).colorScheme.onSurfaceVariant,
-      ),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            text.toUpperCase(),
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              letterSpacing: 1,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        ?trailing,
+      ],
     ),
   );
 }
@@ -663,16 +964,41 @@ class _AudioChooser extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final path = ref.watch(audioPathProvider);
+    final check = ref.watch(audioCheckProvider);
     final scheme = Theme.of(context).colorScheme;
+    final unreadable =
+        check.hasValue &&
+        check.requireValue.readiness == AudioReadiness.unreadable;
+    final checking = path != null && check.isLoading;
+    final seconds = check.hasValue ? check.requireValue.seconds : null;
+    final detail = path == null
+        ? 'Pick the recording to follow.'
+        : checking
+        ? 'Checking the recording…'
+        : unreadable
+        ? 'Can\'t read this recording. It may be damaged, moved, or in a format EchoPrompter can\'t play.'
+        : '${seconds == null ? '' : '${formatSeconds(seconds)} · '}Plays out loud while EchoPrompter follows it through the microphone.';
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(10),
-        color: scheme.surfaceContainerHigh,
+        color: unreadable
+            ? scheme.errorContainer.withValues(alpha: 0.4)
+            : scheme.surfaceContainerHigh,
+        border: path == null ? Border.all(color: scheme.outlineVariant) : null,
       ),
       child: Row(
         children: [
-          const Icon(Icons.graphic_eq),
+          checking
+              ? const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                )
+              : Icon(
+                  unreadable ? Icons.warning_amber_rounded : Icons.graphic_eq,
+                  color: unreadable ? scheme.error : null,
+                ),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -687,11 +1013,10 @@ class _AudioChooser extends ConsumerWidget {
                   style: Theme.of(context).textTheme.labelLarge,
                 ),
                 Text(
-                  path == null
-                      ? 'Pick the recording to follow.'
-                      : 'Plays out loud while EchoPrompter follows it through the microphone.',
-                  style: Theme.of(context).textTheme.bodySmall
-                      ?.copyWith(color: scheme.onSurfaceVariant),
+                  detail,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: unreadable ? scheme.error : scheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),

@@ -1,3 +1,5 @@
+import 'sections.dart';
+
 final _letterOrDigit = RegExp(r'[\p{L}\p{N}]', unicode: true);
 final _nonWord = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
 final _whitespace = RegExp(r'\s+', unicode: true);
@@ -18,9 +20,10 @@ final _blankLineRun = RegExp(r'[ \t]*(?:\r?\n[ \t]*){3,}');
 /// line, or none, is left as written.
 String tidyBlankLines(String script) => script.replaceAll(_blankLineRun, '\n\n');
 
-/// Script words as displayed: split on whitespace, punctuation kept.
-List<String> scriptWords(String script) =>
-    script.split(_whitespace).where((w) => w.isNotEmpty).toList();
+/// Script words as displayed: split on whitespace, punctuation kept. Section marker lines are not words.
+List<String> scriptWords(String script) => script.contains('[')
+    ? [for (final m in spokenWordMatches(script)) m[0]!]
+    : script.split(_whitespace).where((w) => w.isNotEmpty).toList();
 
 /// Words as recognised/spoken: lowercased, split on non letter/digit.
 List<String> spokenWords(String text) =>

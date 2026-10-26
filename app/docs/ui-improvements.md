@@ -90,7 +90,7 @@ Easiest: one settings section with a link and a copy button. No state, no prompt
 Easy: the defaults already live in `const PromptSettings()`, so a reset is one `copyWith`. The prompter rebuilds from `settingsProvider`, so nothing stays stale.
 
 - A **Reset** text button at the top of the "Aa" popover (desktop) and the *Text* section of Reading settings (mobile).
-- Resets only the controls in that panel: text size, line spacing, background opacity, scroll speed, and later margins (U2) and font (U3).
+- Resets only the controls in that panel: text size, line spacing, background opacity, font, margins, and the Reading guide, Progress and Sections switches. It does not reset scroll speed (that is under Follow, and the prompter's ↑ ↓ keys change it mid-take).
 - Never resets mode, position, notch/corner size, mirror, rotation, screen-sharing visibility or shortcuts. Resetting mirror mid-shoot would break a glass rig.
 - Disabled when everything is already at its default.
 - No confirmation dialog: the change is visible at once and easy to adjust back.
@@ -102,9 +102,9 @@ Easy: the defaults already live in `const PromptSettings()`, so a reset is one `
 Easy: one extra check before starting, using the recording state the app already tracks. It also removes two prompter states ("Preparing" and "No audio file") instead of designing them.
 
 **Decided (2026-10-26): the prompter never opens in Audio mode without a ready recording.**
-- In Audio mode, **Start is disabled** until a recording is chosen **and** its words are synced. The caption under Start says what's missing:
+- In Audio mode, **Start is disabled** until a recording is chosen **and** it has been checked. (As built, Audio mode follows the file live through the microphone, so there is no word-syncing step to wait for; the check is that the file exists and loads, and it takes a moment.) The caption under Start says what's missing:
   - No recording chosen: "Choose a recording to start."
-  - Syncing: "Start is available once the words are synced." The inspector shows the sync progress.
+  - Checking: "Start is available once the recording is checked." The inspector shows a spinner.
   - File can't be read, or was moved since it was chosen: "Choose another recording to start."
 - The rule covers every way of starting: the Start button, ⌘↩ / Ctrl+Enter, the Prompter menu's Start Prompter item, and the Read and Record buttons on mobile.
 - The prompter therefore shows Audio mode only as playing or paused. It never shows a "Preparing" or "No audio file" state.

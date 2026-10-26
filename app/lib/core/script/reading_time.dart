@@ -1,3 +1,4 @@
+import 'sections.dart';
 import 'text.dart';
 
 /// Spoken pace used for Voice and Audio modes, where the speaker sets the speed.
@@ -18,7 +19,7 @@ String readingTimeLabel(int words, {double wordsPerMinute = 150}) {
 /// Word index (into [scriptWords]) closest to character [offset].
 int wordIndexAtOffset(String script, int offset) {
   var index = 0;
-  for (final m in RegExp(r'\S+').allMatches(script)) {
+  for (final m in spokenWordMatches(script)) {
     if (m.end >= offset) return index;
     index++;
   }
@@ -28,7 +29,7 @@ int wordIndexAtOffset(String script, int offset) {
 /// Character offset of the start of word [index].
 int offsetOfWord(String script, int index) {
   var i = 0;
-  for (final m in RegExp(r'\S+').allMatches(script)) {
+  for (final m in spokenWordMatches(script)) {
     if (i == index) return m.start;
     i++;
   }

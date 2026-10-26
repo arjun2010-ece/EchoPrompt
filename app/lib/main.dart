@@ -5,6 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:echoprompter_window/echoprompter_window.dart';
 
 import 'core/settings/prompt_settings.dart';
+import 'features/menu/app_menu_bar.dart';
+import 'features/notes/notes_state.dart';
 import 'features/prompter/desktop_prompter_screen.dart';
 import 'features/studio/desktop_studio_screen.dart';
 import 'features/studio/studio_screen.dart';
@@ -21,6 +23,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final prefs = await SharedPreferences.getInstance();
   final library = ScriptLibrary(await scriptsDirectory(), prefs);
+  final notesLibrary = ScriptLibrary(await notesDirectory(), prefs, key: notesHistoryKey);
 
   final migrated = await migrateFromPoc(
     prefs: prefs,
@@ -33,7 +36,11 @@ Future<void> main() async {
   }
 
   Future<void> run() async => runApp(ProviderScope(
-    overrides: [prefsProvider.overrideWithValue(prefs), libraryProvider.overrideWithValue(library)],
+    overrides: [
+      prefsProvider.overrideWithValue(prefs),
+      libraryProvider.overrideWithValue(library),
+      notesLibraryProvider.overrideWithValue(notesLibrary),
+    ],
     child: const EchoPrompterApp(),
   ));
 
@@ -84,6 +91,8 @@ class EchoPrompterApp extends ConsumerWidget {
         StudioAppearance.light => ThemeMode.light,
         StudioAppearance.dark => ThemeMode.dark,
       },
+      // The macOS menu bar; other platforms keep their own.
+      builder: (context, child) => isMacOS ? AppMenuBar(child: child!) : child!,
       home: !isDesktop
           ? const StudioScreen()
           : presenting

@@ -73,6 +73,22 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  # Prompter fonts (Text options). All three are SIL Open Font License; their licences sit beside them.
+  fonts:
+    - family: AtkinsonHyperlegible
+      fonts:
+        - asset: assets/fonts/AtkinsonHyperlegible-Regular.ttf
+        - asset: assets/fonts/AtkinsonHyperlegible-Bold.ttf
+          weight: 700
+    - family: PTSerif
+      fonts:
+        - asset: assets/fonts/PT_Serif-Web-Regular.ttf
+        - asset: assets/fonts/PT_Serif-Web-Bold.ttf
+          weight: 700
+    - family: VarelaRound
+      fonts:
+        - asset: assets/fonts/VarelaRound-Regular.ttf
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

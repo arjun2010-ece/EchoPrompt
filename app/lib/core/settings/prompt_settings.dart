@@ -6,6 +6,29 @@ enum PromptControlMode { normal, voice, recordedAudio }
 
 enum PromptPlacement { notch, corner, floating }
 
+/// Space either side of the text. Medium is what the prompter always used.
+enum PromptMargins {
+  narrow(0.5),
+  medium(1),
+  wide(1.8);
+
+  const PromptMargins(this.scale);
+
+  /// Multiplies the layout's side padding.
+  final double scale;
+}
+
+/// Bundled fonts for the prompter text; [family] is null for the system font.
+enum PromptFont {
+  system(null),
+  serif('PTSerif'),
+  rounded('VarelaRound'),
+  hyperlegible('AtkinsonHyperlegible');
+
+  const PromptFont(this.family);
+  final String? family;
+}
+
 enum PromptCorner { topLeft, topRight, bottomLeft, bottomRight }
 
 /// Valid ranges, shared by every slider and by loading saved settings, so a
@@ -38,6 +61,11 @@ class PromptSettings {
     this.placement = PromptPlacement.floating,
     this.corner = PromptCorner.topRight,
     this.hideFromCapture = true,
+    this.readingGuide = true,
+    this.showProgress = true,
+    this.showSections = true,
+    this.margins = PromptMargins.medium,
+    this.font = PromptFont.system,
     this.notchSize = const Size(560, 150),
     this.cornerSize = const Size(420, 240),
   });
@@ -58,6 +86,30 @@ class PromptSettings {
   final PromptCorner corner;
   final bool hideFromCapture;
 
+  /// Desktop: small `› ‹` marks at the line the prompter keeps you reading on.
+  final bool readingGuide;
+
+  /// Desktop: the progress, elapsed and remaining line under the controls.
+  final bool showProgress;
+
+  /// Desktop: section names between parts of the script (`[Intro]` lines).
+  final bool showSections;
+  final PromptMargins margins;
+  final PromptFont font;
+
+  /// Whether every option under "Text" is at its default, so Reset has nothing to do.
+  bool get isTextDefault {
+    const d = PromptSettings();
+    return fontSize == d.fontSize &&
+        lineSpacing == d.lineSpacing &&
+        opacity == d.opacity &&
+        readingGuide == d.readingGuide &&
+        showProgress == d.showProgress &&
+        showSections == d.showSections &&
+        margins == d.margins &&
+        font == d.font;
+  }
+
   /// Notch body size; height excludes the hardware notch inset.
   final Size notchSize;
   final Size cornerSize;
@@ -74,6 +126,11 @@ class PromptSettings {
     PromptPlacement? placement,
     PromptCorner? corner,
     bool? hideFromCapture,
+    bool? readingGuide,
+    bool? showProgress,
+    bool? showSections,
+    PromptMargins? margins,
+    PromptFont? font,
     Size? notchSize,
     Size? cornerSize,
   }) => PromptSettings(
@@ -88,6 +145,11 @@ class PromptSettings {
     placement: placement ?? this.placement,
     corner: corner ?? this.corner,
     hideFromCapture: hideFromCapture ?? this.hideFromCapture,
+    readingGuide: readingGuide ?? this.readingGuide,
+    showProgress: showProgress ?? this.showProgress,
+    showSections: showSections ?? this.showSections,
+    margins: margins ?? this.margins,
+    font: font ?? this.font,
     notchSize: notchSize ?? this.notchSize,
     cornerSize: cornerSize ?? this.cornerSize,
   );
@@ -104,6 +166,11 @@ class PromptSettings {
     'placement': placement.name,
     'corner': corner.name,
     'hideFromCapture': hideFromCapture,
+    'readingGuide': readingGuide,
+    'showProgress': showProgress,
+    'showSections': showSections,
+    'margins': margins.name,
+    'font': font.name,
     'notchW': notchSize.width,
     'notchH': notchSize.height,
     'cornerW': cornerSize.width,
@@ -126,6 +193,11 @@ class PromptSettings {
       placement: e(PromptPlacement.values, j['placement'], d.placement),
       corner: e(PromptCorner.values, j['corner'], d.corner),
       hideFromCapture: j['hideFromCapture'] as bool? ?? d.hideFromCapture,
+      readingGuide: j['readingGuide'] as bool? ?? d.readingGuide,
+      showProgress: j['showProgress'] as bool? ?? d.showProgress,
+      showSections: j['showSections'] as bool? ?? d.showSections,
+      margins: e(PromptMargins.values, j['margins'], d.margins),
+      font: e(PromptFont.values, j['font'], d.font),
       notchSize: Size(
         (j['notchW'] as num?)?.toDouble() ?? d.notchSize.width,
         (j['notchH'] as num?)?.toDouble() ?? d.notchSize.height,

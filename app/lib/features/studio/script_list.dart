@@ -111,6 +111,7 @@ class ScriptListBody extends ConsumerWidget {
     this.onMenu,
     this.highlightCurrent = true,
     this.dense = false,
+    this.showPreview = false,
   });
 
   final List<SavedScript> history;
@@ -128,6 +129,9 @@ class ScriptListBody extends ConsumerWidget {
   final bool highlightCurrent;
   final bool dense;
 
+  /// Adds a one-line preview of the script under its title (desktop).
+  final bool showPreview;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final picked = ref.watch(scriptSelectionProvider);
@@ -143,6 +147,7 @@ class ScriptListBody extends ConsumerWidget {
       for (final s in history)
         _ScriptRow(
           title: s.title.trim(),
+          preview: showPreview ? s.preview : null,
           meta: '${friendlyDate(s.savedAt)} · ${_words(wordCount(s.body))}',
           icon: Icons.description_outlined,
           dense: dense,
@@ -167,6 +172,7 @@ class ScriptListBody extends ConsumerWidget {
       if (history.isNotEmpty) const SizedBox(height: 8),
       _ScriptRow(
         title: 'Welcome to EchoPrompter',
+        preview: showPreview ? 'Read this aloud to see how the prompter follows you.' : null,
         meta: _words(wordCount(StudioNotifier.welcome)),
         icon: Icons.star_rounded,
         demo: true,
@@ -188,6 +194,7 @@ class _ScriptRow extends StatelessWidget {
   const _ScriptRow({
     required this.title,
     required this.meta,
+    this.preview,
     required this.icon,
     required this.dense,
     required this.current,
@@ -204,6 +211,9 @@ class _ScriptRow extends StatelessWidget {
 
   final String title;
   final String meta;
+
+  /// Start of the script on one line, under the title; null leaves it out.
+  final String? preview;
   final IconData icon;
   final bool demo;
 
@@ -286,6 +296,15 @@ class _ScriptRow extends StatelessWidget {
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                         Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: dense ? theme.textTheme.titleSmall : theme.textTheme.titleMedium),
                         const SizedBox(height: 2),
+                        if (preview != null && preview!.isNotEmpty) ...[
+                          Text(
+                            preview!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: (dense ? theme.textTheme.bodySmall : theme.textTheme.bodyMedium)?.copyWith(color: scheme.onSurfaceVariant),
+                          ),
+                          const SizedBox(height: 2),
+                        ],
                         Row(children: [
                           Flexible(
                             child: Text(

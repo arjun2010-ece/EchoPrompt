@@ -17,6 +17,7 @@ import '../../services/window/prompter_window.dart';
 import '../../ui/position_picker.dart';
 import '../../ui/prompt_text_controls.dart';
 import 'notch_clipper.dart';
+import 'progress_line.dart';
 import 'prompt_surface.dart';
 import 'prompter_controller.dart';
 
@@ -747,10 +748,25 @@ class _DesktopPrompterScreenState extends ConsumerState<DesktopPrompterScreen> {
             ),
           ),
           const SizedBox(height: 10),
-          Text(
-            _footer(s, pr),
-            style: TextStyle(fontSize: 12, color: attention ? Colors.orange : Colors.white.withValues(alpha: 0.7)),
-          ),
+          Row(children: [
+            // Progress on the left, the keys or what's wrong on the right; either alone is centred.
+            if (s.showProgress) ...[
+              Expanded(
+                child: ProgressLine(style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.78))),
+              ),
+              const SizedBox(width: 16),
+            ],
+            Flexible(
+              flex: s.showProgress ? 2 : 1,
+              child: Text(
+                _footer(s, pr),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: s.showProgress ? TextAlign.end : TextAlign.center,
+                style: TextStyle(fontSize: 12, color: attention ? Colors.orange : Colors.white.withValues(alpha: s.showProgress ? 0.6 : 0.7)),
+              ),
+            ),
+          ]),
         ],
       ),
     );
@@ -763,7 +779,20 @@ class _DesktopPrompterScreenState extends ConsumerState<DesktopPrompterScreen> {
     menuChildren: const [
       Padding(
         padding: EdgeInsets.all(16),
-        child: SizedBox(width: 320, child: PromptTextControls()),
+        child: SizedBox(
+          width: 320,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(children: [
+                Expanded(child: Text('Text', style: TextStyle(fontWeight: FontWeight.w600))),
+                ResetTextButton(label: 'Reset to Defaults'),
+              ]),
+              PromptTextControls(),
+            ],
+          ),
+        ),
       ),
     ],
     builder: (context, controller, _) => builder(controller),
@@ -822,7 +851,7 @@ class _DesktopPrompterScreenState extends ConsumerState<DesktopPrompterScreen> {
           ),
           const SizedBox(height: 4),
           Text(
-            _compactStatus(s, pr),
+            s.showProgress ? '${_compactStatus(s, pr)}  •  ${readingPercent(ref)}%' : _compactStatus(s, pr),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(fontSize: 11, color: attention ? Colors.orange : Colors.white.withValues(alpha: 0.75)),

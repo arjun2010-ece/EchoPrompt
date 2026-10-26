@@ -9,6 +9,23 @@ extension StudioAppearanceLabel on StudioAppearance {
   };
 }
 
+extension PromptMarginsLabel on PromptMargins {
+  String get label => switch (this) {
+    PromptMargins.narrow => 'Narrow',
+    PromptMargins.medium => 'Medium',
+    PromptMargins.wide => 'Wide',
+  };
+}
+
+extension PromptFontLabel on PromptFont {
+  String get label => switch (this) {
+    PromptFont.system => 'Default',
+    PromptFont.serif => 'Serif',
+    PromptFont.rounded => 'Rounded',
+    PromptFont.hyperlegible => 'Hyperlegible',
+  };
+}
+
 extension PromptControlModeLabel on PromptControlMode {
   String get label => switch (this) {
     PromptControlMode.normal => 'Normal',

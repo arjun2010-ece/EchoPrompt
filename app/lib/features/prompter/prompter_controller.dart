@@ -96,6 +96,7 @@ class PrompterController extends Notifier<PrompterState> {
   Timer? _lostTimer;
   static const _lostAfter = Duration(seconds: 4);
   ReferenceClock? _clock;
+  double? _audioSeconds;
   int _wordCount = 0;
 
   @override
@@ -106,6 +107,10 @@ class PrompterController extends Notifier<PrompterState> {
   }
 
   int get wordCount => _wordCount;
+
+  /// Audio mode: the recording's length and how far playback has got, for the time left.
+  double? get audioSeconds => _audioSeconds;
+  Duration get audioPosition => _clock?.position ?? Duration.zero;
 
   Future<void> begin({
     required int sessionId,
@@ -299,7 +304,7 @@ class PrompterController extends Notifier<PrompterState> {
     state = state.copyWith(preparing: true, status: 'Loading audio…');
     try {
       final clock = ref.read(referenceClockFactoryProvider)(audible: true);
-      await clock.load(path);
+      _audioSeconds = await clock.load(path);
       _clock = clock;
       clock.completed.listen((_) async {
         // The recogniser is still finishing the last words.

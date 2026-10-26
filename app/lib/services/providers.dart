@@ -30,6 +30,12 @@ Future<Directory> scriptsDirectory() async {
   return Directory(p.join(docs.path, 'EchoPrompter Scripts'));
 }
 
+/// `~/Documents/EchoPrompter Notes` (macOS and Windows): reference notes, kept apart from scripts.
+Future<Directory> notesDirectory() async {
+  final docs = await getApplicationDocumentsDirectory();
+  return Directory(p.join(docs.path, 'EchoPrompter Notes'));
+}
+
 String jsonEncodeSettings(PromptSettings s) => jsonEncode(s.toJson());
 
 class SettingsNotifier extends Notifier<PromptSettings> {
@@ -50,17 +56,39 @@ class SettingsNotifier extends Notifier<PromptSettings> {
 
 final settingsProvider = NotifierProvider<SettingsNotifier, PromptSettings>(SettingsNotifier.new);
 
+/// Puts the options under "Text" back to their defaults. Mode, position, mirror,
+/// screen-sharing visibility and shortcuts are never touched.
+extension ResetTextSettings on SettingsNotifier {
+  void resetText() {
+    const d = PromptSettings();
+    update((c) => c.copyWith(
+      fontSize: d.fontSize,
+      lineSpacing: d.lineSpacing,
+      opacity: d.opacity,
+      readingGuide: d.readingGuide,
+      showProgress: d.showProgress,
+      showSections: d.showSections,
+      margins: d.margins,
+      font: d.font,
+    ));
+  }
+}
+
 class StudioState {
   const StudioState({
     required this.script,
     required this.history,
     required this.sessionId,
+    this.title = '',
     this.presenting = false,
     this.scriptRevision = 0,
     this.resumeWordIndex,
   });
   final String script;
   final List<SavedScript> history;
+
+  /// Saved title of the open script; empty when it has none (the first line is shown instead).
+  final String title;
 
   /// Desktop: the window is currently in prompter configuration.
   final bool presenting;
@@ -79,6 +107,7 @@ class StudioState {
 
   StudioState copyWith({
     String? script,
+    String? title,
     List<SavedScript>? history,
     int? sessionId,
     bool? presenting,
@@ -86,6 +115,7 @@ class StudioState {
     int? Function()? resumeWordIndex,
   }) => StudioState(
     script: script ?? this.script,
+    title: title ?? this.title,
     history: history ?? this.history,
     sessionId: sessionId ?? this.sessionId,
     presenting: presenting ?? this.presenting,
@@ -128,8 +158,8 @@ class StudioNotifier extends Notifier<StudioState> {
   }
 
   /// Replaces the script with [text] from an explicit Save and stores it at once.
-  Future<void> commitScript(String text) {
-    state = state.copyWith(script: text);
+  Future<void> commitScript(String text, {String? title}) {
+    state = state.copyWith(script: text, title: title);
     return flush();
   }
 
@@ -140,19 +170,20 @@ class StudioNotifier extends Notifier<StudioState> {
     _saveTimer = null;
     final text = state.script;
     if (text.trim().isEmpty || (_currentId == null && text == welcome)) return _saving;
-    return _persist(_currentId ??= DateTime.now().microsecondsSinceEpoch.toString(), text);
+    return _persist(_currentId ??= DateTime.now().microsecondsSinceEpoch.toString(), text, state.title);
   }
 
   /// Saves run one after another so each sees the previous save's history and
   /// file name.
-  Future<void> _persist(String id, String text) => _saving = _saving.then((_) async {
+  Future<void> _persist(String id, String text, String title) => _saving = _saving.then((_) async {
     final existing = state.history.where((s) => s.id == id).firstOrNull;
-    if (existing != null && existing.body == text) return;
+    if (existing != null && existing.body == text && (existing.customTitle?.trim() ?? '') == title.trim()) return;
     final script = SavedScript(
       id: id,
       body: text,
       savedAt: DateTime.now(),
       fileName: existing?.fileName,
+      customTitle: title.trim().isEmpty ? null : title.trim(),
     );
     final history = await ref.read(libraryProvider).save(state.history, script);
     state = state.copyWith(history: history);
@@ -177,6 +208,7 @@ class StudioNotifier extends Notifier<StudioState> {
     _currentId = s.id;
     state = state.copyWith(
       script: s.body,
+      title: s.customTitle ?? '',
       scriptRevision: state.scriptRevision + 1,
       resumeWordIndex: () => null,
     );
@@ -188,6 +220,7 @@ class StudioNotifier extends Notifier<StudioState> {
     _currentId = null;
     state = state.copyWith(
       script: welcome,
+      title: '',
       scriptRevision: state.scriptRevision + 1,
       resumeWordIndex: () => null,
     );
@@ -199,6 +232,7 @@ class StudioNotifier extends Notifier<StudioState> {
     _currentId = null;
     state = state.copyWith(
       script: '',
+      title: '',
       scriptRevision: state.scriptRevision + 1,
       resumeWordIndex: () => null,
     );
@@ -210,6 +244,7 @@ class StudioNotifier extends Notifier<StudioState> {
     _currentId = null;
     state = state.copyWith(
       script: s.body,
+      title: s.customTitle ?? '',
       scriptRevision: state.scriptRevision + 1,
       resumeWordIndex: () => null,
     );
@@ -235,11 +270,12 @@ class StudioNotifier extends Notifier<StudioState> {
       state = state.copyWith(presenting: false, resumeWordIndex: () => wordIndex);
 
   /// Loads an imported script as a new, unsaved script.
-  Future<void> importScript(String body) async {
+  Future<void> importScript(String body, {String? title}) async {
     flush();
     _currentId = null;
     state = state.copyWith(
       script: body,
+      title: title ?? '',
       presenting: false,
       scriptRevision: state.scriptRevision + 1,
       resumeWordIndex: () => null,
@@ -260,6 +296,19 @@ class ReadingWordNotifier extends Notifier<int> {
 }
 
 final readingWordProvider = NotifierProvider<ReadingWordNotifier, int>(ReadingWordNotifier.new);
+
+/// Pixels of text still to scroll in Normal mode, in steps of 10 so it changes a few times a second at
+/// most. The progress line turns it into time left.
+class ScrollRemainingNotifier extends Notifier<double> {
+  @override
+  double build() => 0;
+  void set(double v) {
+    final stepped = (v / 10).round() * 10.0;
+    if (stepped != state) state = stepped;
+  }
+}
+
+final scrollRemainingProvider = NotifierProvider<ScrollRemainingNotifier, double>(ScrollRemainingNotifier.new);
 
 /// Global shortcuts, persisted and layered over the platform defaults.
 class ShortcutsNotifier extends Notifier<Map<ShortcutAction, ShortcutBinding>> {
