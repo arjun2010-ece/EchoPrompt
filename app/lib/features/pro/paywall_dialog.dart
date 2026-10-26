@@ -10,6 +10,12 @@ Future<void> showPaywall(BuildContext context, {String? reason}) =>
 /// Pro accent: amber, so the buy path stands apart from the blue Start button.
 const proAccent = Color(0xFFFFB340);
 
+/// Amber text and icons need a deeper shade on light surfaces.
+Color proText(BuildContext context) =>
+    Theme.of(context).brightness == Brightness.dark ? proAccent : const Color(0xFFB26A00);
+
+bool _dark(BuildContext context) => Theme.of(context).brightness == Brightness.dark;
+
 String _planName(ProPlan p) => switch (p) {
   ProPlan.monthly => 'Monthly',
   ProPlan.yearly => 'Yearly',
@@ -77,7 +83,7 @@ class _PaywallDialogState extends State<PaywallDialog> {
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 3),
                 child: Row(children: [
-                  const Icon(Icons.check_rounded, size: 18, color: Color(0xFF30D158)),
+                  Icon(Icons.check_rounded, size: 18, color: _dark(context) ? const Color(0xFF30D158) : const Color(0xFF1F9D43)),
                   const SizedBox(width: 10),
                   Expanded(child: Text(line)),
                 ]),
@@ -168,8 +174,8 @@ class _PlanCard extends StatelessWidget {
                 const SizedBox(width: 6),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                  decoration: BoxDecoration(color: const Color(0xFF1E3A26), borderRadius: BorderRadius.circular(5)),
-                  child: Text(badge!, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF30D158))),
+                  decoration: BoxDecoration(color: _dark(context) ? const Color(0xFF1E3A26) : const Color(0xFFDDF5E4), borderRadius: BorderRadius.circular(5)),
+                  child: Text(badge!, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: _dark(context) ? const Color(0xFF30D158) : const Color(0xFF1F9D43))),
                 ),
               ],
             ]),
@@ -188,7 +194,7 @@ class _PlanCard extends StatelessWidget {
 Future<void> showSubscriptionCheckAlert(BuildContext context) => showDialog<void>(
   context: context,
   builder: (ctx) => AlertDialog(
-    icon: const Icon(Icons.warning_amber_rounded, size: 32, color: proAccent),
+    icon: Icon(Icons.warning_amber_rounded, size: 32, color: proText(ctx)),
     title: const Text('Connect to check your subscription'),
     content: const Text(
       'EchoPrompter checks your Pro subscription at least every 30 days. Connect to the internet to keep presenting. '

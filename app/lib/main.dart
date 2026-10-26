@@ -64,18 +64,8 @@ ThemeData _theme(Brightness brightness) {
     (states) => states.contains(WidgetState.disabled) ? SystemMouseCursors.basic : SystemMouseCursors.click,
   );
   final style = ButtonStyle(mouseCursor: cursor);
-  // Dark is the designed look: the palette from the macOS design. Light keeps the standard Material scheme.
-  if (brightness == Brightness.dark) return desktopDarkTheme(style);
-  return ThemeData(
-    colorSchemeSeed: Colors.orange,
-    brightness: brightness,
-    filledButtonTheme: FilledButtonThemeData(style: style),
-    elevatedButtonTheme: ElevatedButtonThemeData(style: style),
-    outlinedButtonTheme: OutlinedButtonThemeData(style: style),
-    textButtonTheme: TextButtonThemeData(style: style),
-    iconButtonTheme: IconButtonThemeData(style: style),
-    segmentedButtonTheme: SegmentedButtonThemeData(style: style),
-  );
+  // The palettes from the macOS design, one per appearance.
+  return brightness == Brightness.dark ? desktopDarkTheme(style) : desktopLightTheme(style);
 }
 
 class EchoPrompterApp extends ConsumerWidget {

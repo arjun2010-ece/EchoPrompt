@@ -912,7 +912,7 @@ class _Inspector extends ConsumerWidget {
                     Text(
                       'Needs Pro. You\'ve used your $freeScriptLimit free scripts.',
                       textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: proAccent),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: proText(context)),
                     ),
                   ],
                   if (audioBlock != null) ...[

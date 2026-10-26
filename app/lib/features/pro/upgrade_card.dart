@@ -34,7 +34,7 @@ class UpgradeCard extends ConsumerWidget {
       margin: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       padding: EdgeInsets.all(limit ? 14 : 12),
       decoration: BoxDecoration(
-        color: limit ? const Color(0xFF33291A) : scheme.surfaceContainerHigh,
+        color: limit ? (theme.brightness == Brightness.dark ? const Color(0xFF33291A) : const Color(0xFFFFF4DF)) : scheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: limit ? proAccent : scheme.outlineVariant, width: limit ? 1.5 : 1),
       ),
