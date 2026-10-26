@@ -151,11 +151,13 @@ class _Group extends StatelessWidget {
             style: Theme.of(context).textTheme.labelMedium?.copyWith(letterSpacing: 1, color: scheme.onSurfaceVariant),
           ),
         ),
-        DecoratedBox(
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainerHigh,
+        // A Material, not a coloured box, so the switch rows inside can paint their own hover and ink.
+        Material(
+          color: scheme.surfaceContainerHigh,
+          clipBehavior: Clip.antiAlias,
+          shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: scheme.outlineVariant),
+            side: BorderSide(color: scheme.outlineVariant),
           ),
           child: Column(children: [
             for (var i = 0; i < children.length; i++) ...[

@@ -347,7 +347,7 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
       body = Row(
         children: [
           if (threeColumns) ...[
-            SizedBox(width: 300, child: ColoredBox(color: scheme.surfaceContainer, child: history)),
+            SizedBox(width: 300, child: Material(color: scheme.surfaceContainer, child: history)),
             const VerticalDivider(width: 1),
           ],
           Expanded(child: NotesPane(onImport: _importNote)),
@@ -365,12 +365,12 @@ class _DesktopStudioScreenState extends ConsumerState<DesktopStudioScreen> {
       body = Row(
         children: [
           if (threeColumns) ...[
-            SizedBox(width: 300, child: ColoredBox(color: scheme.surfaceContainer, child: history)),
+            SizedBox(width: 300, child: Material(color: scheme.surfaceContainer, child: history)),
             const VerticalDivider(width: 1),
           ],
           Expanded(flex: 5, child: editor),
           const VerticalDivider(width: 1),
-          SizedBox(width: 400, child: ColoredBox(color: scheme.surfaceContainerLow, child: inspector)),
+          SizedBox(width: 400, child: Material(color: scheme.surfaceContainerLow, child: inspector)),
         ],
       );
     }
