@@ -19,8 +19,9 @@ class LibraryTabNotifier extends Notifier<LibraryTab> {
 
 final libraryTabProvider = NotifierProvider<LibraryTabNotifier, LibraryTab>(LibraryTabNotifier.new);
 
-/// `- [ ] item` or `- [x] item`: group 1 is everything up to the box, 2 its mark, 3 the rest.
-final _checkboxLine = RegExp(r'^(\s*[-*]\s+\[)([ xX])(\].*)$');
+/// `- [ ] item`, `- [x] item`, or just `[ ] item` / `[] item`: group 1 is everything up to the box, 2 its
+/// mark (empty for `[]`), 3 the rest.
+final _checkboxLine = RegExp(r'^(\s*(?:[-*]\s+)?\[)([ xX]?)(\].*)$');
 final _bulletLine = RegExp(r'^\s*[-*]\s+(.*)$');
 
 /// How a line of a note is shown.
@@ -126,7 +127,7 @@ class NotesNotifier extends Notifier<NotesState> {
     final lines = note.body.replaceAll('\r\n', '\n').split('\n');
     final m = _checkboxLine.firstMatch(lines[line]);
     if (m == null) return;
-    lines[line] = '${m[1]}${m[2] == ' ' ? 'x' : ' '}${m[3]}';
+    lines[line] = '${m[1]}${m[2]!.trim().isEmpty ? 'x' : ' '}${m[3]}';
     await save(title: note.customTitle ?? '', body: lines.join('\n'));
   }
 

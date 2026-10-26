@@ -440,7 +440,7 @@ class _NoteEditorState extends ConsumerState<_NoteEditor> {
                   child: Text.rich(
                     TextSpan(children: [
                       TextSpan(text: '- [ ]', style: mono),
-                      const TextSpan(text: ' checkbox  ·  '),
+                      const TextSpan(text: ' or [ ] checkbox  ·  '),
                       TextSpan(text: '-', style: mono),
                       const TextSpan(text: ' bullet'),
                     ]),
